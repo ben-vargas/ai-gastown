@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -165,7 +166,6 @@ func getPolecatManager(rigName string) (*polecat.Manager, *rig.Rig, error) {
 	return mgr, r, nil
 }
 
-
 func runPolecatList(cmd *cobra.Command, args []string) error {
 	var rigs []*rig.Rig
 
@@ -199,6 +199,7 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 
 		polecats, err := mgr.List()
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to list polecats in %s: %v\n", r.Name, err)
 			continue
 		}
 
@@ -303,7 +304,7 @@ func runPolecatRemove(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Removing polecat %s/%s...\n", rigName, polecatName)
 
 	if err := mgr.Remove(polecatName); err != nil {
-		if err == polecat.ErrHasChanges && !polecatForce {
+		if errors.Is(err, polecat.ErrHasChanges) && !polecatForce {
 			return fmt.Errorf("polecat has uncommitted changes. Use --force to remove anyway")
 		}
 		return fmt.Errorf("removing polecat: %w", err)
