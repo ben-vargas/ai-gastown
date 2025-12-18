@@ -738,54 +738,84 @@ gt-auth-epic              # Epic: "Fix authentication bugs"
 
 Workers process issues independently. Work flows through the merge queue. No "swarm ID" needed - the epic provides grouping, labels provide ad-hoc queries, dependencies provide sequencing.
 
-### 12. Agent Session Lifecycle (Daemon Protection)
+### 12. Agent Session Lifecycle (One Daemon)
 
-**Decision**: A background daemon manages agent session lifecycles, including cycling sessions when agents request handoff.
+**Decision**: ONE daemon (Go process) for all Gas Town manages agent lifecycles. Agents use a unified `gt handoff` command to request lifecycle actions.
+
+**Architecture**:
+```
+Gas Town Daemon (gt daemon)
+├── Pokes Mayor periodically
+├── Pokes all Witnesses periodically
+├── Processes lifecycle requests from daemon/ inbox
+└── Restarts sessions when cycle requested
+
+Lifecycle Hierarchy:
+  Daemon → manages Mayor, all Witnesses
+  Witness → manages Polecats, Refinery (per rig)
+```
 
 **Rationale**:
 - Agents can't restart themselves after exiting
-- Handoff mail is useless without someone to start the new session
-- Daemon provides reliable session management outside agent context
-- Enables autonomous long-running operation (hours/days)
+- ONE daemon is simpler than per-rig daemons
+- Daemon is dumb scheduler; intelligence is in agents
+- Unified protocol means all agents work the same way
 
-**Session cycling protocol**:
-1. Agent detects context exhaustion or requests cycle
-2. Agent sends handoff mail to own inbox
-3. Agent sets `requesting_cycle: true` in state.json
-4. Agent exits (or sends explicit signal to daemon)
-5. Daemon detects exit + cycle request flag
-6. Daemon starts new session
-7. New session reads handoff mail, resumes work
+**Unified lifecycle command** (`gt handoff`):
+```bash
+gt handoff              # Context-aware default
+gt handoff --shutdown   # Terminate, don't restart (polecats)
+gt handoff --cycle      # Restart with handoff (long-running agents)
+gt handoff --restart    # Fresh restart, no handoff
+```
 
-**Daemon responsibilities**:
-- Monitor agent session health (heartbeat)
-- Detect session exit
-- Check cycle request flag in state.json
-- Start replacement session if cycle requested
-- Clear cycle flag after successful restart
-- Report failures to Mayor (escalation)
+| Agent | Default | Sends request to |
+|-------|---------|------------------|
+| Polecat | --shutdown | rig/witness |
+| Refinery | --cycle | rig/witness |
+| Witness | --cycle | daemon/ |
+| Mayor | --cycle | daemon/ |
 
-**Applies to**: Witness, Refinery (both long-running agents that may exhaust context)
+**Lifecycle request protocol**:
+1. Agent runs `gt handoff` (verifies git clean, sends handoff mail)
+2. Agent sends lifecycle request to its manager
+3. Agent sets `requesting_<action>: true` in state.json
+4. Agent waits (does NOT self-exit)
+5. Manager receives request, verifies safe
+6. Manager kills session
+7. Manager starts new session (for cycle/restart)
+8. New session reads handoff mail, resumes work
+
+**Daemon heartbeat loop**:
+- Poke Mayor: "HEARTBEAT: check your rigs"
+- Poke each Witness: "HEARTBEAT: check your workers"
+- Agents ignore poke if already working
+- Process any lifecycle requests in daemon/ inbox
+- Restart dead sessions if cycle was requested
 
 ```mermaid
 sequenceDiagram
     participant A1 as Agent Session 1
-    participant S as State.json
-    participant D as Daemon
+    participant M as Lifecycle Manager
     participant A2 as Agent Session 2
-    participant MB as Mailbox
 
-    A1->>MB: Send handoff mail
-    A1->>S: Set requesting_cycle: true
-    A1->>A1: Exit cleanly
-    D->>D: Detect session exit
-    D->>S: Check requesting_cycle
-    S->>D: true
-    D->>D: Start new session
-    D->>S: Clear requesting_cycle
-    A2->>MB: Read handoff mail
-    A2->>A2: Resume from handoff
+    A1->>A1: gt handoff --cycle
+    A1->>A1: Send handoff mail to self
+    A1->>M: Lifecycle request: cycle
+    A1->>A1: Set requesting_cycle, wait
+
+    M->>M: Verify safe to act
+    M->>A1: Kill session
+    M->>A2: Start new session
+    A2->>A2: Read handoff mail
+    A2->>A2: Resume work
 ```
+
+**Polecat shutdown** (--shutdown default):
+After Witness kills session:
+- Remove worktree: `git worktree remove polecats/<name>`
+- Delete branch: `git branch -d polecat/<name>`
+- Polecat ceases to exist (ephemeral)
 
 ### 13. Resource-Constrained Worker Pool
 
