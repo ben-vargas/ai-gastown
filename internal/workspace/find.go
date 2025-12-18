@@ -16,13 +16,22 @@ const (
 	// PrimaryMarker is the main config file that identifies a workspace.
 	PrimaryMarker = "config/town.json"
 
+	// AlternativePrimaryMarker is the town-level mayor config file.
+	// This distinguishes a town mayor from a rig-level mayor clone.
+	AlternativePrimaryMarker = "mayor/config.json"
+
 	// SecondaryMarker is an alternative indicator at the town level.
+	// Note: This can match rig-level mayors too, so we continue searching
+	// upward after finding this to look for primary markers.
 	SecondaryMarker = "mayor"
 )
 
 // Find locates the town root by walking up from the given directory.
-// It looks for config/town.json (primary) or mayor/ directory (secondary).
-// Returns the absolute path to the town root, or empty string if not found.
+// It looks for config/town.json or mayor/config.json (primary markers)
+// or mayor/ directory (secondary marker).
+//
+// To avoid matching rig-level mayor directories, we continue searching
+// upward after finding a secondary marker, preferring primary matches.
 func Find(startDir string) (string, error) {
 	// Resolve to absolute path and follow symlinks
 	absDir, err := filepath.Abs(startDir)
@@ -35,6 +44,9 @@ func Find(startDir string) (string, error) {
 		return "", fmt.Errorf("evaluating symlinks: %w", err)
 	}
 
+	// Track the first secondary match in case no primary is found
+	var secondaryMatch string
+
 	// Walk up the directory tree
 	current := absDir
 	for {
@@ -44,18 +56,28 @@ func Find(startDir string) (string, error) {
 			return current, nil
 		}
 
-		// Check for secondary marker (mayor/ directory)
-		secondaryPath := filepath.Join(current, SecondaryMarker)
-		info, err := os.Stat(secondaryPath)
-		if err == nil && info.IsDir() {
+		// Check for alternative primary marker (mayor/config.json)
+		// This distinguishes a town-level mayor from a rig-level mayor clone
+		altPrimaryPath := filepath.Join(current, AlternativePrimaryMarker)
+		if _, err := os.Stat(altPrimaryPath); err == nil {
 			return current, nil
+		}
+
+		// Check for secondary marker (mayor/ directory)
+		// Don't return immediately - continue searching for primary markers
+		if secondaryMatch == "" {
+			secondaryPath := filepath.Join(current, SecondaryMarker)
+			info, err := os.Stat(secondaryPath)
+			if err == nil && info.IsDir() {
+				secondaryMatch = current
+			}
 		}
 
 		// Move to parent directory
 		parent := filepath.Dir(current)
 		if parent == current {
-			// Reached filesystem root
-			return "", nil
+			// Reached filesystem root - return secondary match if found
+			return secondaryMatch, nil
 		}
 		current = parent
 	}
@@ -92,6 +114,8 @@ func FindFromCwdOrError() (string, error) {
 }
 
 // IsWorkspace checks if the given directory is a Gas Town workspace root.
+// A directory is a workspace if it has primary markers (config/town.json
+// or mayor/config.json) or a secondary marker (mayor/ directory).
 func IsWorkspace(dir string) (bool, error) {
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
@@ -101,6 +125,12 @@ func IsWorkspace(dir string) (bool, error) {
 	// Check for primary marker
 	primaryPath := filepath.Join(absDir, PrimaryMarker)
 	if _, err := os.Stat(primaryPath); err == nil {
+		return true, nil
+	}
+
+	// Check for alternative primary marker
+	altPrimaryPath := filepath.Join(absDir, AlternativePrimaryMarker)
+	if _, err := os.Stat(altPrimaryPath); err == nil {
 		return true, nil
 	}
 
