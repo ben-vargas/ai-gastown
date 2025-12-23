@@ -201,8 +201,12 @@ func runMoleculeBurn(cmd *cobra.Command, args []string) error {
 
 	moleculeID := attachment.AttachedMolecule
 
-	// Detach the molecule (this "burns" it by removing the attachment)
-	_, err = b.DetachMolecule(handoff.ID)
+	// Detach the molecule with audit logging (this "burns" it by removing the attachment)
+	_, err = b.DetachMoleculeWithAudit(handoff.ID, beads.DetachOptions{
+		Operation: "burn",
+		Agent:     target,
+		Reason:    "molecule burned by agent",
+	})
 	if err != nil {
 		return fmt.Errorf("detaching molecule: %w", err)
 	}
@@ -334,8 +338,12 @@ squashed_at: %s
 			style.Dim.Render("Warning:"), err)
 	}
 
-	// Detach the molecule from the handoff bead
-	_, err = b.DetachMolecule(handoff.ID)
+	// Detach the molecule from the handoff bead with audit logging
+	_, err = b.DetachMoleculeWithAudit(handoff.ID, beads.DetachOptions{
+		Operation: "squash",
+		Agent:     target,
+		Reason:    fmt.Sprintf("molecule squashed to digest %s", digestIssue.ID),
+	})
 	if err != nil {
 		return fmt.Errorf("detaching molecule: %w", err)
 	}

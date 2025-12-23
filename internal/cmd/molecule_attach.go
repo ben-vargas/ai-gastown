@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 func runMoleculeAttach(cmd *cobra.Command, args []string) error {
@@ -59,8 +60,11 @@ func runMoleculeDetach(cmd *cobra.Command, args []string) error {
 
 	previousMolecule := attachment.AttachedMolecule
 
-	// Detach the molecule
-	_, err = b.DetachMolecule(pinnedBeadID)
+	// Detach the molecule with audit logging
+	_, err = b.DetachMoleculeWithAudit(pinnedBeadID, beads.DetachOptions{
+		Operation: "detach",
+		Agent:     detectCurrentAgent(),
+	})
 	if err != nil {
 		return fmt.Errorf("detaching molecule: %w", err)
 	}
@@ -125,4 +129,21 @@ func runMoleculeAttachment(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// detectCurrentAgent returns the current agent identity based on working directory.
+// Returns empty string if identity cannot be determined.
+func detectCurrentAgent() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil || townRoot == "" {
+		return ""
+	}
+
+	ctx := detectRole(cwd, townRoot)
+	return buildAgentIdentity(ctx)
 }
