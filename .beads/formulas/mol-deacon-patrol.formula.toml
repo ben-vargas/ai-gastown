@@ -63,6 +63,35 @@ title = "Nudge newly spawned polecats"
 
 [[steps]]
 description = """
+Evaluate pending async gates.
+
+Gates are async coordination primitives that block until conditions are met.
+The Deacon is responsible for monitoring gates and closing them when ready.
+
+**Timer gates** (await_type: timer):
+Check if elapsed time since creation exceeds the timeout duration.
+
+```bash
+# List all open gates
+bd gate list --json
+
+# For each timer gate, check if elapsed:
+# - CreatedAt + Timeout < Now → gate is ready to close
+# - Close with: bd gate close <id> --reason "Timer elapsed"
+```
+
+**GitHub gates** (await_type: gh:run, gh:pr) - handled in separate step.
+
+**Human/Mail gates** - require external input, skip here.
+
+After closing a gate, the Waiters field contains mail addresses to notify.
+Send a brief notification to each waiter that the gate has cleared."""
+id = "gate-evaluation"
+needs = ["inbox-check"]
+title = "Evaluate pending async gates"
+
+[[steps]]
+description = """
 Check Witness and Refinery health for each rig.
 
 **ZFC Principle**: You (Claude) make the judgment call about what is \"stuck\" or \"unresponsive\" - there are no hardcoded thresholds in Go. Read the signals, consider context, and decide.
@@ -118,7 +147,7 @@ gt mail send mayor/ -s \"Health: <rig> <component> unresponsive\" \\
 
 Reset unresponsive_cycles to 0 when component responds normally."""
 id = "health-scan"
-needs = ["trigger-pending-spawns"]
+needs = ["trigger-pending-spawns", "gate-evaluation"]
 title = "Check Witness and Refinery health"
 
 [[steps]]
