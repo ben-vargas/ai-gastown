@@ -161,11 +161,16 @@ func (m *Manager) Start(polecat string, opts StartOptions) error {
 	agentID := fmt.Sprintf("%s/%s", m.rig.Name, polecat)
 	_ = m.tmux.SetPaneDiedHook(sessionID, agentID)
 
-	// Send initial command
+	// Send initial command with env vars exported inline
+	// NOTE: tmux SetEnvironment only affects NEW panes, not the current shell.
+	// We must export GT_ROLE, GT_RIG, GT_POLECAT inline for Claude to detect identity.
 	command := opts.Command
 	if command == "" {
 		// Polecats run with full permissions - Gas Town is for grownups
-		command = "claude --dangerously-skip-permissions"
+		// Export env vars inline so Claude's role detection works
+		bdActor := fmt.Sprintf("%s/polecats/%s", m.rig.Name, polecat)
+		command = fmt.Sprintf("export GT_ROLE=polecat GT_RIG=%s GT_POLECAT=%s BD_ACTOR=%s && claude --dangerously-skip-permissions",
+			m.rig.Name, polecat, bdActor)
 	}
 	if err := m.tmux.SendKeys(sessionID, command); err != nil {
 		return fmt.Errorf("sending command: %w", err)

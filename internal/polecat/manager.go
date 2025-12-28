@@ -662,12 +662,14 @@ func (m *Manager) loadFromBeads(name string) (*Polecat, error) {
 // Template variables {{rig}} and {{name}} are substituted with actual values.
 // This provides polecats with context about their role and available commands.
 func (m *Manager) installCLAUDETemplate(polecatPath, name string) error {
-	// Read template from rig's templates directory
-	templatePath := filepath.Join(m.rig.Path, "templates", "polecat-CLAUDE.md")
+	// Read template from mayor/rig/templates directory
+	// Templates live in the mayor's clone, not at rig root
+	templatePath := filepath.Join(m.rig.Path, "mayor", "rig", "templates", "polecat-CLAUDE.md")
 	content, err := os.ReadFile(templatePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Template doesn't exist - this is fine, just skip
+			// Template doesn't exist - warn and skip (this is a setup issue)
+			fmt.Printf("Warning: polecat template not found at %s\n", templatePath)
 			return nil
 		}
 		return fmt.Errorf("reading template: %w", err)
