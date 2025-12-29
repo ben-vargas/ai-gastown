@@ -726,6 +726,24 @@ func detectSender() string {
 		}
 	}
 
+	// If in a rig's refinery directory, extract address (format: rig/refinery)
+	if strings.Contains(cwd, "/refinery") {
+		parts := strings.Split(cwd, "/refinery")
+		if len(parts) >= 1 {
+			rigName := filepath.Base(parts[0])
+			return fmt.Sprintf("%s/refinery", rigName)
+		}
+	}
+
+	// If in a rig's witness directory, extract address (format: rig/witness)
+	if strings.Contains(cwd, "/witness") {
+		parts := strings.Split(cwd, "/witness")
+		if len(parts) >= 1 {
+			rigName := filepath.Base(parts[0])
+			return fmt.Sprintf("%s/witness", rigName)
+		}
+	}
+
 	// Default to mayor
 	return "mayor/"
 }
