@@ -1,0 +1,7 @@
+{
+  "last_failure": "2025-12-30T22:00:00.709392-08:00",
+  "failure_count": 1,
+  "backoff_until": "2025-12-30T22:00:30.709392-08:00",
+  "needs_manual_sync": false,
+  "failure_reason": "git pull failed in worktree: exit status 128\nFrom github.com:steveyegge/gastown\n * branch            beads-sync -\u003e FETCH_HEAD\nfatal: Cannot rebase onto multiple branches.\n"
+}
