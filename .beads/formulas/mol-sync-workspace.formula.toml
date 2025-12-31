@@ -30,6 +30,8 @@ Polecats can file a bead and delegate. Refinery must resolve inline.
 | Variable | Source | Description |
 |----------|--------|-------------|
 | role | auto-detected | Agent role (crew/polecat/refinery/witness) |
+| build_command | config or default | Build command (default: `go build ./...`) |
+| test_command | config or default | Test command (default: `go test ./...`) |
 
 ## Failure Modes
 
@@ -246,8 +248,9 @@ description = """
 Ensure the codebase compiles.
 
 ```bash
-go build ./...
-# Or appropriate build command for the project
+{{ build_command }}
+# Default: go build ./...
+# Configure via build_command variable for non-Go projects
 ```
 
 **If build succeeds:** Continue to next step.
@@ -281,7 +284,9 @@ description = """
 Verify tests pass on current baseline.
 
 ```bash
-go test ./...
+{{ test_command }}
+# Default: go test ./...
+# Configure via test_command variable for non-Go projects
 ```
 
 **If tests pass:** Continue to next step.
