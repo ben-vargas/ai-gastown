@@ -181,34 +181,35 @@ func runCrewRefresh(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating session: %w", err)
 	}
 
-	// Set environment (non-fatal: session works without these)
-	_ = t.SetEnvironment(sessionID, "GT_RIG", r.Name)
-	_ = t.SetEnvironment(sessionID, "GT_CREW", name)
-
 	// Wait for shell to be ready
 	if err := t.WaitForShellReady(sessionID, constants.ShellReadyTimeout); err != nil {
 		return fmt.Errorf("waiting for shell: %w", err)
 	}
 
-	// Start claude (refresh uses regular permissions, reads handoff mail)
-	if err := t.SendKeys(sessionID, "claude"); err != nil {
+	// Build the startup beacon for predecessor discovery via /resume
+	// Pass it as Claude's initial prompt - processed when Claude is ready
+	address := fmt.Sprintf("%s/crew/%s", r.Name, name)
+	beacon := session.FormatStartupNudge(session.StartupNudgeConfig{
+		Recipient: address,
+		Sender:    "human",
+		Topic:     "refresh",
+	})
+
+	// Start claude with environment exports and beacon as initial prompt
+	// Refresh uses regular permissions (no --dangerously-skip-permissions)
+	// SessionStart hook handles context loading (gt prime --hook)
+	claudeCmd := config.BuildCrewStartupCommand(r.Name, name, r.Path, beacon)
+	// Remove --dangerously-skip-permissions for refresh (interactive mode)
+	claudeCmd = strings.Replace(claudeCmd, " --dangerously-skip-permissions", "", 1)
+	if err := t.SendKeys(sessionID, claudeCmd); err != nil {
 		return fmt.Errorf("starting claude: %w", err)
 	}
 
-	// Wait for Claude to start
+	// Wait for Claude to start (optional, for status feedback)
 	shells := constants.SupportedShells
 	if err := t.WaitForCommand(sessionID, shells, constants.ClaudeStartTimeout); err != nil {
 		// Non-fatal
 	}
-	time.Sleep(constants.ShutdownNotifyDelay)
-
-	// Inject startup nudge for predecessor discovery via /resume
-	address := fmt.Sprintf("%s/crew/%s", r.Name, name)
-	_ = session.StartupNudge(t, sessionID, session.StartupNudgeConfig{
-		Recipient: address,
-		Sender:    "human",
-		Topic:     "refresh",
-	}) // Non-fatal
 
 	fmt.Printf("%s Refreshed crew workspace: %s/%s\n",
 		style.Bold.Render("✓"), r.Name, name)
@@ -337,9 +338,6 @@ func runCrewRestart(cmd *cobra.Command, args []string) error {
 
 		// Set environment
 		t.SetEnvironment(sessionID, "GT_ROLE", "crew")
-		t.SetEnvironment(sessionID, "GT_RIG", r.Name)
-		t.SetEnvironment(sessionID, "GT_CREW", name)
-
 		// Apply rig-based theming (non-fatal: theming failure doesn't affect operation)
 		theme := getThemeForRig(r.Name)
 		_ = t.ConfigureGasTownSession(sessionID, theme, r.Name, name, "crew")
@@ -351,43 +349,29 @@ func runCrewRestart(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		// Start claude with skip permissions (crew workers are trusted)
-		// Export GT_ROLE and BD_ACTOR since tmux SetEnvironment only affects new panes
-		claudeCmd := config.BuildCrewStartupCommand(r.Name, name, r.Path, "")
+		// Build the startup beacon for predecessor discovery via /resume
+		// Pass it as Claude's initial prompt - processed when Claude is ready
+		address := fmt.Sprintf("%s/crew/%s", r.Name, name)
+		beacon := session.FormatStartupNudge(session.StartupNudgeConfig{
+			Recipient: address,
+			Sender:    "human",
+			Topic:     "restart",
+		})
+
+		// Start claude with environment exports and beacon as initial prompt
+		// SessionStart hook handles context loading (gt prime --hook)
+		// The startup protocol tells agent to check mail/hook, no explicit prompt needed
+		claudeCmd := config.BuildCrewStartupCommand(r.Name, name, r.Path, beacon)
 		if err := t.SendKeys(sessionID, claudeCmd); err != nil {
 			fmt.Printf("Error starting claude for %s: %v\n", arg, err)
 			lastErr = err
 			continue
 		}
 
-		// Wait for Claude to start, then prime it
+		// Wait for Claude to start (optional, for status feedback)
 		shells := constants.SupportedShells
 		if err := t.WaitForCommand(sessionID, shells, constants.ClaudeStartTimeout); err != nil {
 			style.PrintWarning("Timeout waiting for Claude to start for %s: %v", arg, err)
-		}
-		// Give Claude time to initialize after process starts
-		time.Sleep(constants.ShutdownNotifyDelay)
-
-		// Inject startup nudge for predecessor discovery via /resume
-		address := fmt.Sprintf("%s/crew/%s", r.Name, name)
-		_ = session.StartupNudge(t, sessionID, session.StartupNudgeConfig{
-			Recipient: address,
-			Sender:    "human",
-			Topic:     "restart",
-		}) // Non-fatal: session works without nudge
-
-		if err := t.NudgeSession(sessionID, "gt prime"); err != nil {
-			// Non-fatal: Claude started but priming failed
-			style.PrintWarning("Could not send prime command to %s: %v", arg, err)
-		}
-
-		// Send crew resume prompt after prime completes
-		// Use NudgeSession (the canonical way to message Claude) with longer pre-delay
-		// to ensure gt prime has finished processing
-		time.Sleep(5 * time.Second)
-		crewPrompt := "Read your mail, act on anything urgent, else await instructions."
-		if err := t.NudgeSession(sessionID, crewPrompt); err != nil {
-			style.PrintWarning("Could not send resume prompt to %s: %v", arg, err)
 		}
 
 		fmt.Printf("%s Restarted crew workspace: %s/%s\n",
@@ -514,11 +498,6 @@ func restartCrewSession(rigName, crewName, clonePath string) error {
 		return fmt.Errorf("creating session: %w", err)
 	}
 
-	// Set environment
-	t.SetEnvironment(sessionID, "GT_ROLE", "crew")
-	t.SetEnvironment(sessionID, "GT_RIG", rigName)
-	t.SetEnvironment(sessionID, "GT_CREW", crewName)
-
 	// Apply rig-based theming
 	theme := getThemeForRig(rigName)
 	_ = t.ConfigureGasTownSession(sessionID, theme, rigName, crewName, "crew")
@@ -528,35 +507,27 @@ func restartCrewSession(rigName, crewName, clonePath string) error {
 		return fmt.Errorf("waiting for shell: %w", err)
 	}
 
-	// Start claude with skip permissions
-	claudeCmd := config.BuildCrewStartupCommand(rigName, crewName, "", "")
+	// Build the startup beacon for predecessor discovery via /resume
+	// Pass it as Claude's initial prompt - processed when Claude is ready
+	address := fmt.Sprintf("%s/crew/%s", rigName, crewName)
+	beacon := session.FormatStartupNudge(session.StartupNudgeConfig{
+		Recipient: address,
+		Sender:    "human",
+		Topic:     "restart",
+	})
+
+	// Start claude with environment exports and beacon as initial prompt
+	// SessionStart hook handles context loading (gt prime --hook)
+	claudeCmd := config.BuildCrewStartupCommand(rigName, crewName, "", beacon)
 	if err := t.SendKeys(sessionID, claudeCmd); err != nil {
 		return fmt.Errorf("starting claude: %w", err)
 	}
 
-	// Wait for Claude to start, then prime it
+	// Wait for Claude to start (optional, for status feedback)
 	shells := constants.SupportedShells
 	if err := t.WaitForCommand(sessionID, shells, constants.ClaudeStartTimeout); err != nil {
 		// Non-fatal warning
 	}
-	time.Sleep(constants.ShutdownNotifyDelay)
-
-	// Inject startup nudge for predecessor discovery via /resume
-	address := fmt.Sprintf("%s/crew/%s", rigName, crewName)
-	_ = session.StartupNudge(t, sessionID, session.StartupNudgeConfig{
-		Recipient: address,
-		Sender:    "human",
-		Topic:     "restart",
-	}) // Non-fatal
-
-	if err := t.NudgeSession(sessionID, "gt prime"); err != nil {
-		// Non-fatal
-	}
-
-	// Send crew resume prompt after prime completes
-	time.Sleep(5 * time.Second)
-	crewPrompt := "Read your mail, act on anything urgent, else await instructions."
-	_ = t.NudgeSession(sessionID, crewPrompt)
 
 	return nil
 }
