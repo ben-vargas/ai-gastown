@@ -25,7 +25,7 @@ type InstalledRecord struct {
 // FormulaStatus represents the status of a single formula during health check.
 type FormulaStatus struct {
 	Name          string
-	Status        string // "ok", "outdated", "modified", "missing", "new"
+	Status        string // "ok", "outdated", "modified", "missing", "new", "untracked"
 	EmbeddedHash  string // hash computed from embedded content
 	InstalledHash string // hash we installed (from .installed.json)
 	CurrentHash   string // hash of current file on disk
@@ -35,11 +35,12 @@ type FormulaStatus struct {
 type HealthReport struct {
 	Formulas []FormulaStatus
 	// Counts
-	OK       int
-	Outdated int // embedded changed, user hasn't modified
-	Modified int // user modified the file
-	Missing  int // file was deleted
-	New      int // new formula not yet installed
+	OK        int
+	Outdated  int // embedded changed, user hasn't modified
+	Modified  int // user modified the file (tracked in .installed.json)
+	Missing   int // file was deleted
+	New       int // new formula not yet installed
+	Untracked int // file exists but not in .installed.json (safe to update)
 }
 
 // computeHash computes SHA256 hash of data.
@@ -229,10 +230,15 @@ func CheckFormulaHealth(beadsPath string) (*HealthReport, error) {
 				// User hasn't modified, safe to update
 				status.Status = "outdated"
 				report.Outdated++
-			} else {
-				// File differs from what we installed - user modified
+			} else if wasInstalled {
+				// File was tracked and user modified it - don't overwrite
 				status.Status = "modified"
 				report.Modified++
+			} else {
+				// File exists but not tracked (e.g., from older gt version)
+				// Safe to update since we have no record of user modification
+				status.Status = "untracked"
+				report.Untracked++
 			}
 		}
 
@@ -242,8 +248,8 @@ func CheckFormulaHealth(beadsPath string) (*HealthReport, error) {
 	return report, nil
 }
 
-// UpdateFormulas updates formulas that are safe to update (outdated or missing).
-// Skips user-modified formulas.
+// UpdateFormulas updates formulas that are safe to update (outdated, missing, or untracked).
+// Skips user-modified formulas (tracked files that user changed).
 // Returns counts of updated, skipped (modified), and reinstalled (missing).
 func UpdateFormulas(beadsPath string) (updated, skipped, reinstalled int, err error) {
 	embedded, err := getEmbeddedFormulas()
@@ -285,9 +291,12 @@ func UpdateFormulas(beadsPath string) (updated, skipped, reinstalled int, err er
 		} else if wasInstalled && currentHash == installedHash {
 			// User hasn't modified, safe to update
 			shouldInstall = true
-		} else {
-			// User modified - skip
+		} else if wasInstalled {
+			// Tracked file was modified by user - skip
 			isModified = true
+		} else {
+			// Untracked file (e.g., from older gt version) - safe to update
+			shouldInstall = true
 		}
 
 		if isModified {
