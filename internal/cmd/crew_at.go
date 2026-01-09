@@ -7,6 +7,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/crew"
+	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -73,7 +74,7 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Resolve account for Claude config
+	// Resolve account for runtime config
 	townRoot, err := workspace.FindFromCwd()
 	if err != nil {
 		return fmt.Errorf("finding town root: %w", err)
@@ -87,6 +88,9 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Using account: %s\n", accountHandle)
 	}
 
+	runtimeConfig := config.LoadRuntimeConfig(r.Path)
+	_ = runtime.EnsureSettingsForRole(worker.ClonePath, "crew", runtimeConfig)
+
 	// Check if session exists
 	t := tmux.NewTmux()
 	sessionID := crewSessionName(r.Name, name)
@@ -95,15 +99,15 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("checking session: %w", err)
 	}
 
-	// Before creating a new session, check if there's already a Claude session
+	// Before creating a new session, check if there's already a runtime session
 	// running in this crew's directory (might have been started manually or via
 	// a different mechanism)
 	if !hasSession {
-		existingSessions, err := t.FindSessionByWorkDir(worker.ClonePath, true)
+		existingSessions, err := t.FindSessionByWorkDir(worker.ClonePath, runtimeConfig.Tmux.ProcessNames)
 		if err == nil && len(existingSessions) > 0 {
-			// Found an existing session with an agent running in this directory
+			// Found an existing session with runtime running in this directory
 			existingSession := existingSessions[0]
-			fmt.Printf("%s Found existing agent session '%s' in crew directory\n",
+			fmt.Printf("%s Found existing runtime session '%s' in crew directory\n",
 				style.Warning.Render("⚠"),
 				existingSession)
 			fmt.Printf("  Attaching to existing session instead of creating a new one\n")
@@ -137,9 +141,9 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 		_ = t.SetEnvironment(sessionID, "GT_RIG", r.Name)
 		_ = t.SetEnvironment(sessionID, "GT_CREW", name)
 
-		// Set CLAUDE_CONFIG_DIR for account selection (non-fatal)
-		if claudeConfigDir != "" {
-			_ = t.SetEnvironment(sessionID, "CLAUDE_CONFIG_DIR", claudeConfigDir)
+		// Set runtime config dir for account selection (non-fatal)
+		if runtimeConfig.Session != nil && runtimeConfig.Session.ConfigDirEnv != "" && claudeConfigDir != "" {
+			_ = t.SetEnvironment(sessionID, runtimeConfig.Session.ConfigDirEnv, claudeConfigDir)
 		}
 
 		// Apply rig-based theming (non-fatal: theming failure doesn't affect operation)
@@ -158,31 +162,35 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("getting pane ID: %w", err)
 		}
 
-		// Use respawn-pane to replace shell with Claude directly
-		// This gives cleaner lifecycle: Claude exits → session ends (no intermediate shell)
-		// Pass "gt prime" as initial prompt so Claude loads context immediately
+		// Use respawn-pane to replace shell with runtime directly
+		// This gives cleaner lifecycle: runtime exits → session ends (no intermediate shell)
+		// Pass "gt prime" as initial prompt if supported
 		// Export GT_ROLE and BD_ACTOR since tmux SetEnvironment only affects new panes
 		startupCmd, err := config.BuildCrewStartupCommandWithAgentOverride(r.Name, name, r.Path, "gt prime", crewAgentOverride)
 		if err != nil {
 			return fmt.Errorf("building startup command: %w", err)
 		}
+		// Prepend config dir env if available
+		if runtimeConfig.Session != nil && runtimeConfig.Session.ConfigDirEnv != "" && claudeConfigDir != "" {
+			startupCmd = config.PrependEnv(startupCmd, map[string]string{runtimeConfig.Session.ConfigDirEnv: claudeConfigDir})
+		}
 		if err := t.RespawnPane(paneID, startupCmd); err != nil {
-			return fmt.Errorf("starting claude: %w", err)
+			return fmt.Errorf("starting runtime: %w", err)
 		}
 
 		fmt.Printf("%s Created session for %s/%s\n",
 			style.Bold.Render("✓"), r.Name, name)
 	} else {
-		// Session exists - check if Claude is still running
+		// Session exists - check if runtime is still running
 		// Uses both pane command check and UI marker detection to avoid
-		// restarting when user is in a subshell spawned from Claude
+		// restarting when user is in a subshell spawned from the runtime
 		agentCfg, _, err := config.ResolveAgentConfigWithOverride(townRoot, r.Path, crewAgentOverride)
 		if err != nil {
 			return fmt.Errorf("resolving agent: %w", err)
 		}
 		if !t.IsAgentRunning(sessionID, config.ExpectedPaneCommands(agentCfg)...) {
-			// Claude has exited, restart it using respawn-pane
-			fmt.Printf("Claude exited, restarting...\n")
+			// Runtime has exited, restart it using respawn-pane
+			fmt.Printf("Runtime exited, restarting...\n")
 
 			// Get pane ID for respawn
 			paneID, err := t.GetPaneID(sessionID)
@@ -190,15 +198,19 @@ func runCrewAt(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("getting pane ID: %w", err)
 			}
 
-			// Use respawn-pane to replace shell with Claude directly
-			// Pass "gt prime" as initial prompt so Claude loads context immediately
+			// Use respawn-pane to replace shell with runtime directly
+			// Pass "gt prime" as initial prompt if supported
 			// Export GT_ROLE and BD_ACTOR since tmux SetEnvironment only affects new panes
 			startupCmd, err := config.BuildCrewStartupCommandWithAgentOverride(r.Name, name, r.Path, "gt prime", crewAgentOverride)
 			if err != nil {
 				return fmt.Errorf("building startup command: %w", err)
 			}
+			// Prepend config dir env if available
+			if runtimeConfig.Session != nil && runtimeConfig.Session.ConfigDirEnv != "" && claudeConfigDir != "" {
+				startupCmd = config.PrependEnv(startupCmd, map[string]string{runtimeConfig.Session.ConfigDirEnv: claudeConfigDir})
+			}
 			if err := t.RespawnPane(paneID, startupCmd); err != nil {
-				return fmt.Errorf("restarting claude: %w", err)
+				return fmt.Errorf("restarting runtime: %w", err)
 			}
 		}
 	}

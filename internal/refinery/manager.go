@@ -12,13 +12,13 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
-	"github.com/steveyegge/gastown/internal/claude"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/mrqueue"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/util"
@@ -166,11 +166,12 @@ func (m *Manager) Start(foreground bool) error {
 		refineryRigDir = m.workDir
 	}
 
-	// Ensure Claude settings exist in refinery/ (not refinery/rig/) so we don't
-	// write into the source repo. Claude walks up the tree to find settings.
+	// Ensure runtime settings exist in refinery/ (not refinery/rig/) so we don't
+	// write into the source repo. Runtime walks up the tree to find settings.
 	refineryParentDir := filepath.Join(m.rig.Path, "refinery")
-	if err := claude.EnsureSettingsForRole(refineryParentDir, "refinery"); err != nil {
-		return fmt.Errorf("ensuring Claude settings: %w", err)
+	runtimeConfig := config.LoadRuntimeConfig(m.rig.Path)
+	if err := runtime.EnsureSettingsForRole(refineryParentDir, "refinery", runtimeConfig); err != nil {
+		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
 
 	if err := t.NewSession(sessionID, refineryRigDir); err != nil {
@@ -222,15 +223,17 @@ func (m *Manager) Start(foreground bool) error {
 	}
 
 	// Wait for Claude to start and show its prompt (non-fatal)
-	// WaitForClaudeReady waits for "> " prompt, more reliable than just checking node is running
-	if err := t.WaitForClaudeReady(sessionID, constants.ClaudeStartTimeout); err != nil {
+	// WaitForRuntimeReady waits for the runtime to be ready
+	if err := t.WaitForRuntimeReady(sessionID, runtimeConfig, constants.ClaudeStartTimeout); err != nil {
 		// Non-fatal - try to continue anyway
 	}
 
 	// Accept bypass permissions warning dialog if it appears.
 	_ = t.AcceptBypassPermissionsWarning(sessionID)
 
-	time.Sleep(constants.ShutdownNotifyDelay)
+	// Wait for runtime to be fully ready
+	runtime.SleepForReadyDelay(runtimeConfig)
+	_ = runtime.RunStartupFallback(t, sessionID, "refinery", runtimeConfig)
 
 	// Inject startup nudge for predecessor discovery via /resume
 	address := fmt.Sprintf("%s/refinery", m.rig.Name)

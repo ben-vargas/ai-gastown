@@ -13,6 +13,7 @@ import (
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/crew"
 	"github.com/steveyegge/gastown/internal/mail"
+	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/townlog"
@@ -163,7 +164,7 @@ func runCrewRemove(cmd *cobra.Command, args []string) error {
 		} else {
 			// Default: CLOSE the agent bead (preserves CV history)
 			closeArgs := []string{"close", agentBeadID, "--reason=Crew workspace removed"}
-			if sessionID := os.Getenv("CLAUDE_SESSION_ID"); sessionID != "" {
+			if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
 				closeArgs = append(closeArgs, "--session="+sessionID)
 			}
 			closeCmd := exec.Command("bd", closeArgs...)
@@ -236,9 +237,9 @@ func runCrewRefresh(cmd *cobra.Command, args []string) error {
 
 	// Use manager's Start() with refresh options
 	err = crewMgr.Start(name, crew.StartOptions{
-		KillExisting:  true,             // Kill old session if running
-		Topic:         "refresh",        // Startup nudge topic
-		Interactive:   true,             // No --dangerously-skip-permissions
+		KillExisting:  true,      // Kill old session if running
+		Topic:         "refresh", // Startup nudge topic
+		Interactive:   true,      // No --dangerously-skip-permissions
 		AgentOverride: crewAgentOverride,
 	})
 	if err != nil {
@@ -356,8 +357,8 @@ func runCrewRestart(cmd *cobra.Command, args []string) error {
 		// Use manager's Start() with restart options
 		// Start() will create workspace if needed (idempotent)
 		err = crewMgr.Start(name, crew.StartOptions{
-			KillExisting:  true,             // Kill old session if running
-			Topic:         "restart",        // Startup nudge topic
+			KillExisting:  true,      // Kill old session if running
+			Topic:         "restart", // Startup nudge topic
 			AgentOverride: crewAgentOverride,
 		})
 		if err != nil {
@@ -436,8 +437,8 @@ func runCrewRestartAll() error {
 
 		// Use manager's Start() with restart options
 		err = crewMgr.Start(agent.AgentName, crew.StartOptions{
-			KillExisting:  true,             // Kill old session if running
-			Topic:         "restart",        // Startup nudge topic
+			KillExisting:  true,      // Kill old session if running
+			Topic:         "restart", // Startup nudge topic
 			AgentOverride: crewAgentOverride,
 		})
 		if err != nil {

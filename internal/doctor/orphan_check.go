@@ -225,8 +225,8 @@ func (c *OrphanSessionCheck) isValidSession(sess string, validRigs []string, may
 	return true
 }
 
-// OrphanProcessCheck detects Claude/claude-code processes that are not
-// running inside a tmux session. These may be user's personal Claude sessions
+// OrphanProcessCheck detects runtime processes that are not
+// running inside a tmux session. These may be user's personal sessions
 // or legitimately orphaned processes from crashed Gas Town sessions.
 // This check is informational only - it does not auto-fix since we cannot
 // distinguish user sessions from orphaned Gas Town processes.
@@ -239,12 +239,12 @@ func NewOrphanProcessCheck() *OrphanProcessCheck {
 	return &OrphanProcessCheck{
 		BaseCheck: BaseCheck{
 			CheckName:        "orphan-processes",
-			CheckDescription: "Detect Claude processes outside tmux",
+			CheckDescription: "Detect runtime processes outside tmux",
 		},
 	}
 }
 
-// Run checks for Claude processes running outside tmux.
+// Run checks for runtime processes running outside tmux.
 func (c *OrphanProcessCheck) Run(ctx *CheckContext) *CheckResult {
 	// Get list of tmux session PIDs
 	tmuxPIDs, err := c.getTmuxSessionPIDs()
@@ -257,30 +257,30 @@ func (c *OrphanProcessCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
-	// Find Claude processes
-	claudeProcs, err := c.findClaudeProcesses()
+	// Find runtime processes
+	runtimeProcs, err := c.findRuntimeProcesses()
 	if err != nil {
 		return &CheckResult{
 			Name:    c.Name(),
 			Status:  StatusWarning,
-			Message: "Could not list Claude processes",
+			Message: "Could not list runtime processes",
 			Details: []string{err.Error()},
 		}
 	}
 
-	if len(claudeProcs) == 0 {
+	if len(runtimeProcs) == 0 {
 		return &CheckResult{
 			Name:    c.Name(),
 			Status:  StatusOK,
-			Message: "No Claude processes found",
+			Message: "No runtime processes found",
 		}
 	}
 
-	// Check which Claude processes are outside tmux
+	// Check which runtime processes are outside tmux
 	var outsideTmux []processInfo
 	var insideTmux int
 
-	for _, proc := range claudeProcs {
+	for _, proc := range runtimeProcs {
 		if c.isOrphanProcess(proc, tmuxPIDs) {
 			outsideTmux = append(outsideTmux, proc)
 		} else {
@@ -292,12 +292,12 @@ func (c *OrphanProcessCheck) Run(ctx *CheckContext) *CheckResult {
 		return &CheckResult{
 			Name:    c.Name(),
 			Status:  StatusOK,
-			Message: fmt.Sprintf("All %d Claude processes are inside tmux", insideTmux),
+			Message: fmt.Sprintf("All %d runtime processes are inside tmux", insideTmux),
 		}
 	}
 
 	details := make([]string, 0, len(outsideTmux)+2)
-	details = append(details, "These may be your personal Claude sessions or orphaned Gas Town processes.")
+	details = append(details, "These may be your personal sessions or orphaned Gas Town processes.")
 	details = append(details, "Verify these are expected before manually killing any:")
 	for _, proc := range outsideTmux {
 		details = append(details, fmt.Sprintf("  PID %d: %s (parent: %d)", proc.pid, proc.cmd, proc.ppid))
@@ -306,7 +306,7 @@ func (c *OrphanProcessCheck) Run(ctx *CheckContext) *CheckResult {
 	return &CheckResult{
 		Name:    c.Name(),
 		Status:  StatusWarning,
-		Message: fmt.Sprintf("Found %d Claude process(es) running outside tmux", len(outsideTmux)),
+		Message: fmt.Sprintf("Found %d runtime process(es) running outside tmux", len(outsideTmux)),
 		Details: details,
 	}
 }
@@ -358,21 +358,20 @@ func (c *OrphanProcessCheck) getTmuxSessionPIDs() (map[int]bool, error) { //noli
 	return pids, nil
 }
 
-// findClaudeProcesses finds all running claude/claude-code CLI processes.
+// findRuntimeProcesses finds all running runtime CLI processes.
 // Excludes Claude.app desktop application and its helpers.
-func (c *OrphanProcessCheck) findClaudeProcesses() ([]processInfo, error) {
+func (c *OrphanProcessCheck) findRuntimeProcesses() ([]processInfo, error) {
 	var procs []processInfo
 
-	// Use ps to find claude processes
-	// Look for both "claude" and "claude-code" in command
+	// Use ps to find runtime processes
 	out, err := exec.Command("ps", "-eo", "pid,ppid,comm").Output()
 	if err != nil {
 		return nil, err
 	}
 
-	// Regex to match claude CLI processes (not Claude.app)
-	// Match: "claude" or paths ending in "/claude"
-	claudePattern := regexp.MustCompile(`(?i)(^claude$|/claude$)`)
+	// Regex to match runtime CLI processes (not Claude.app)
+	// Match: "claude", "claude-code", or "codex" (or paths ending in those)
+	runtimePattern := regexp.MustCompile(`(?i)(^claude$|/claude$|^claude-code$|/claude-code$|^codex$|/codex$)`)
 
 	// Pattern to exclude Claude.app and related desktop processes
 	excludePattern := regexp.MustCompile(`(?i)(Claude\.app|claude-native|chrome-native)`)
@@ -383,7 +382,7 @@ func (c *OrphanProcessCheck) findClaudeProcesses() ([]processInfo, error) {
 			continue
 		}
 
-		// Check if command matches claude CLI
+		// Check if command matches runtime CLI
 		cmd := strings.Join(fields[2:], " ")
 
 		// Skip desktop app processes
@@ -391,8 +390,8 @@ func (c *OrphanProcessCheck) findClaudeProcesses() ([]processInfo, error) {
 			continue
 		}
 
-		// Only match CLI claude processes
-		if !claudePattern.MatchString(cmd) {
+		// Only match CLI runtime processes
+		if !runtimePattern.MatchString(cmd) {
 			continue
 		}
 
@@ -414,7 +413,7 @@ func (c *OrphanProcessCheck) findClaudeProcesses() ([]processInfo, error) {
 	return procs, nil
 }
 
-// isOrphanProcess checks if a Claude process is orphaned.
+// isOrphanProcess checks if a runtime process is orphaned.
 // A process is orphaned if its parent (or ancestor) is not a tmux session.
 func (c *OrphanProcessCheck) isOrphanProcess(proc processInfo, tmuxPIDs map[int]bool) bool {
 	// Walk up the process tree looking for a tmux parent

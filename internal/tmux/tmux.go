@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 )
 
@@ -391,8 +392,9 @@ func (t *Tmux) GetPaneWorkDir(session string) (string, error) {
 
 // FindSessionByWorkDir finds tmux sessions where the pane's current working directory
 // matches or is under the target directory. Returns session names that match.
-// If requireAgentRunning is true, only returns sessions that have some non-shell command running.
-func (t *Tmux) FindSessionByWorkDir(targetDir string, requireAgentRunning bool) ([]string, error) {
+// If processNames is provided, only returns sessions that match those processes.
+// If processNames is nil or empty, returns all sessions matching the directory.
+func (t *Tmux) FindSessionByWorkDir(targetDir string, processNames []string) ([]string, error) {
 	sessions, err := t.ListSessions()
 	if err != nil {
 		return nil, err
@@ -411,14 +413,13 @@ func (t *Tmux) FindSessionByWorkDir(targetDir string, requireAgentRunning bool) 
 
 		// Check if workdir matches target (exact match or subdir)
 		if workDir == targetDir || strings.HasPrefix(workDir, targetDir+"/") {
-			if requireAgentRunning {
-				// Only include if an agent appears to be running
-				if t.IsAgentRunning(session) {
+			if len(processNames) > 0 {
+				if t.IsRuntimeRunning(session, processNames) {
 					matches = append(matches, session)
 				}
-			} else {
-				matches = append(matches, session)
+				continue
 			}
+			matches = append(matches, session)
 		}
 	}
 
@@ -572,6 +573,25 @@ func (t *Tmux) IsClaudeRunning(session string) bool {
 	return matched
 }
 
+// IsRuntimeRunning checks if a runtime appears to be running in the session.
+// Only trusts the pane command - UI markers in scrollback cause false positives.
+// This is the runtime-config-aware version of IsAgentRunning.
+func (t *Tmux) IsRuntimeRunning(session string, processNames []string) bool {
+	if len(processNames) == 0 {
+		return false
+	}
+	cmd, err := t.GetPaneCommand(session)
+	if err != nil {
+		return false
+	}
+	for _, name := range processNames {
+		if cmd == name {
+			return true
+		}
+	}
+	return false
+}
+
 // WaitForCommand polls until the pane is NOT running one of the excluded commands.
 // Useful for waiting until a shell has started a new process (e.g., claude).
 // Returns nil when a non-excluded command is detected, or error on timeout.
@@ -620,13 +640,12 @@ func (t *Tmux) WaitForShellReady(session string, timeout time.Duration) error {
 	return fmt.Errorf("timeout waiting for shell")
 }
 
-// WaitForClaudeReady polls until Claude's prompt indicator appears in the pane.
-// Claude is ready when we see "> " at the start of a line (the input prompt).
-// This is more reliable than just checking if node is running.
+// WaitForRuntimeReady polls until the runtime's prompt indicator appears in the pane.
+// Runtime is ready when we see the configured prompt prefix at the start of a line.
 //
 // IMPORTANT: Bootstrap vs Steady-State Observation
 //
-// This function uses regex to detect Claude's prompt - a ZFC violation.
+// This function uses regex to detect runtime prompts - a ZFC violation.
 // ZFC (Zero False Commands) principle: AI should observe AI, not regex.
 //
 // Bootstrap (acceptable):
@@ -643,7 +662,24 @@ func (t *Tmux) WaitForShellReady(session string, timeout time.Duration) error {
 //
 // See: gt deacon pending (ZFC-compliant AI observation)
 // See: gt deacon trigger-pending (bootstrap mode, regex-based)
-func (t *Tmux) WaitForClaudeReady(session string, timeout time.Duration) error {
+func (t *Tmux) WaitForRuntimeReady(session string, rc *config.RuntimeConfig, timeout time.Duration) error {
+	if rc == nil || rc.Tmux == nil {
+		return nil
+	}
+
+	if rc.Tmux.ReadyPromptPrefix == "" {
+		if rc.Tmux.ReadyDelayMs <= 0 {
+			return nil
+		}
+		// Fallback to fixed delay when prompt detection is unavailable.
+		delay := time.Duration(rc.Tmux.ReadyDelayMs) * time.Millisecond
+		if delay > timeout {
+			delay = timeout
+		}
+		time.Sleep(delay)
+		return nil
+	}
+
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		// Capture last few lines of the pane
@@ -652,16 +688,17 @@ func (t *Tmux) WaitForClaudeReady(session string, timeout time.Duration) error {
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
-		// Look for Claude's prompt indicator "> " at start of line
+		// Look for runtime prompt indicator at start of line
 		for _, line := range lines {
 			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "> ") || trimmed == ">" {
+			prefix := strings.TrimSpace(rc.Tmux.ReadyPromptPrefix)
+			if strings.HasPrefix(trimmed, rc.Tmux.ReadyPromptPrefix) || (prefix != "" && trimmed == prefix) {
 				return nil
 			}
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	return fmt.Errorf("timeout waiting for Claude prompt")
+	return fmt.Errorf("timeout waiting for runtime prompt")
 }
 
 // GetSessionInfo returns detailed information about a session.

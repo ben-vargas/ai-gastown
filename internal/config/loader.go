@@ -726,15 +726,7 @@ func LoadRuntimeConfig(rigPath string) *RuntimeConfig {
 	if settings.Runtime == nil {
 		return DefaultRuntimeConfig()
 	}
-	// Fill in defaults for empty fields
-	rc := settings.Runtime
-	if rc.Command == "" {
-		rc.Command = "claude"
-	}
-	if rc.Args == nil {
-		rc.Args = []string{"--dangerously-skip-permissions"}
-	}
-	return rc
+	return normalizeRuntimeConfig(settings.Runtime)
 }
 
 // TownSettingsPath returns the path to town settings file.
@@ -1080,14 +1072,22 @@ func BuildStartupCommand(envVars map[string]string, rigPath, prompt string) stri
 		}
 	}
 
+	// Copy env vars to avoid mutating caller map
+	resolvedEnv := make(map[string]string, len(envVars)+2)
+	for k, v := range envVars {
+		resolvedEnv[k] = v
+	}
 	// Add GT_ROOT so agents can find town-level resources (formulas, etc.)
 	if townRoot != "" {
-		envVars["GT_ROOT"] = townRoot
+		resolvedEnv["GT_ROOT"] = townRoot
+	}
+	if rc.Session != nil && rc.Session.SessionIDEnv != "" {
+		resolvedEnv["GT_SESSION_ID_ENV"] = rc.Session.SessionIDEnv
 	}
 
 	// Build environment export prefix
 	var exports []string
-	for k, v := range envVars {
+	for k, v := range resolvedEnv {
 		exports = append(exports, fmt.Sprintf("%s=%s", k, v))
 	}
 
@@ -1107,6 +1107,21 @@ func BuildStartupCommand(envVars map[string]string, rigPath, prompt string) stri
 	}
 
 	return cmd
+}
+
+// PrependEnv prepends export statements to a command string.
+func PrependEnv(command string, envVars map[string]string) string {
+	if len(envVars) == 0 {
+		return command
+	}
+
+	var exports []string
+	for k, v := range envVars {
+		exports = append(exports, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	sort.Strings(exports)
+	return "export " + strings.Join(exports, " ") + " && " + command
 }
 
 // BuildStartupCommandWithAgentOverride builds a startup command like BuildStartupCommand,

@@ -405,6 +405,12 @@ func (m *Manager) AddRig(opts AddRigOptions) (*Rig, error) {
 	if err := m.createRoleCLAUDEmd(refineryRigPath, "refinery", opts.Name, ""); err != nil {
 		return nil, fmt.Errorf("creating refinery CLAUDE.md: %w", err)
 	}
+	// Create refinery hooks for patrol triggering (at refinery/ level, not rig/)
+	refineryPath := filepath.Dir(refineryRigPath)
+	runtimeConfig := config.LoadRuntimeConfig(rigPath)
+	if err := m.createPatrolHooks(refineryPath, runtimeConfig); err != nil {
+		fmt.Printf("  Warning: Could not create refinery hooks: %v\n", err)
+	}
 
 	// Create empty crew directory with README (crew members added via gt crew add)
 	crewPath := filepath.Join(rigPath, "crew")
@@ -438,6 +444,10 @@ Use crew for your own workspace. Polecats are for batch work dispatch.
 	witnessPath := filepath.Join(rigPath, "witness")
 	if err := os.MkdirAll(witnessPath, 0755); err != nil {
 		return nil, fmt.Errorf("creating witness dir: %w", err)
+	}
+	// Create witness hooks for patrol triggering
+	if err := m.createPatrolHooks(witnessPath, runtimeConfig); err != nil {
+		fmt.Printf("  Warning: Could not create witness hooks: %v\n", err)
 	}
 
 	// Create polecats directory (empty)
@@ -920,6 +930,65 @@ func (m *Manager) createRoleCLAUDEmd(workspacePath string, role string, rigName 
 
 	claudePath := filepath.Join(workspacePath, "CLAUDE.md")
 	return os.WriteFile(claudePath, []byte(content), 0644)
+}
+
+// createPatrolHooks creates .claude/settings.json with hooks for patrol roles.
+// These hooks trigger gt prime on session start and inject mail, enabling
+// autonomous patrol execution for Witness and Refinery roles.
+func (m *Manager) createPatrolHooks(workspacePath string, runtimeConfig *config.RuntimeConfig) error {
+	if runtimeConfig == nil || runtimeConfig.Hooks == nil || runtimeConfig.Hooks.Provider != "claude" {
+		return nil
+	}
+	if runtimeConfig.Hooks.Dir == "" || runtimeConfig.Hooks.SettingsFile == "" {
+		return nil
+	}
+
+	settingsDir := filepath.Join(workspacePath, runtimeConfig.Hooks.Dir)
+	if err := os.MkdirAll(settingsDir, 0755); err != nil {
+		return fmt.Errorf("creating settings dir: %w", err)
+	}
+
+	// Standard patrol hooks - same as deacon
+	hooksJSON := `{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "gt prime && gt mail check --inject"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "gt prime"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "gt mail check --inject"
+          }
+        ]
+      }
+    ]
+  }
+}
+`
+	settingsPath := filepath.Join(settingsDir, runtimeConfig.Hooks.SettingsFile)
+	return os.WriteFile(settingsPath, []byte(hooksJSON), 0600)
 }
 
 // seedPatrolMolecules creates patrol molecule prototypes in the rig's beads database.

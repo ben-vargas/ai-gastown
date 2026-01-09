@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/steveyegge/gastown/internal/claude"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
@@ -59,9 +59,9 @@ type SessionStartOptions struct {
 	// Account specifies the account handle to use (overrides default).
 	Account string
 
-	// ClaudeConfigDir is resolved CLAUDE_CONFIG_DIR for the account.
+	// RuntimeConfigDir is resolved config directory for the runtime account.
 	// If set, this is injected as an environment variable.
-	ClaudeConfigDir string
+	RuntimeConfigDir string
 }
 
 // SessionInfo contains information about a running polecat session.
@@ -134,11 +134,13 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 		workDir = m.polecatDir(polecat)
 	}
 
-	// Ensure Claude settings exist in polecats/ (not polecats/<name>/) so we don't
-	// write into the source repo. Claude walks up the tree to find settings.
+	runtimeConfig := config.LoadRuntimeConfig(m.rig.Path)
+
+	// Ensure runtime settings exist in polecats/ (not polecats/<name>/) so we don't
+	// write into the source repo. Runtime walks up the tree to find settings.
 	polecatsDir := filepath.Join(m.rig.Path, "polecats")
-	if err := claude.EnsureSettingsForRole(polecatsDir, "polecat"); err != nil {
-		return fmt.Errorf("ensuring Claude settings: %w", err)
+	if err := runtime.EnsureSettingsForRole(polecatsDir, "polecat", runtimeConfig); err != nil {
+		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
 
 	// Create session
@@ -150,9 +152,9 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 	debugSession("SetEnvironment GT_RIG", m.tmux.SetEnvironment(sessionID, "GT_RIG", m.rig.Name))
 	debugSession("SetEnvironment GT_POLECAT", m.tmux.SetEnvironment(sessionID, "GT_POLECAT", polecat))
 
-	// Set CLAUDE_CONFIG_DIR for account selection (non-fatal)
-	if opts.ClaudeConfigDir != "" {
-		debugSession("SetEnvironment CLAUDE_CONFIG_DIR", m.tmux.SetEnvironment(sessionID, "CLAUDE_CONFIG_DIR", opts.ClaudeConfigDir))
+	// Set runtime config dir for account selection (non-fatal)
+	if runtimeConfig.Session != nil && runtimeConfig.Session.ConfigDirEnv != "" && opts.RuntimeConfigDir != "" {
+		debugSession("SetEnvironment "+runtimeConfig.Session.ConfigDirEnv, m.tmux.SetEnvironment(sessionID, runtimeConfig.Session.ConfigDirEnv, opts.RuntimeConfigDir))
 	}
 
 	// Set beads environment for worktree polecats (non-fatal)
@@ -183,6 +185,10 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 	if command == "" {
 		command = config.BuildPolecatStartupCommand(m.rig.Name, polecat, m.rig.Path, "")
 	}
+	// Prepend runtime config dir env if needed
+	if runtimeConfig.Session != nil && runtimeConfig.Session.ConfigDirEnv != "" && opts.RuntimeConfigDir != "" {
+		command = config.PrependEnv(command, map[string]string{runtimeConfig.Session.ConfigDirEnv: opts.RuntimeConfigDir})
+	}
 	// Wait for shell to be ready before sending keys (prevents "can't find pane" under load)
 	if err := m.tmux.WaitForShellReady(sessionID, 5*time.Second); err != nil {
 		_ = m.tmux.KillSession(sessionID)
@@ -198,8 +204,9 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 	// Accept bypass permissions warning dialog if it appears
 	debugSession("AcceptBypassPermissionsWarning", m.tmux.AcceptBypassPermissionsWarning(sessionID))
 
-	// Wait for Claude to be fully ready
-	time.Sleep(8 * time.Second)
+	// Wait for runtime to be fully ready at the prompt (not just started)
+	runtime.SleepForReadyDelay(runtimeConfig)
+	_ = runtime.RunStartupFallback(m.tmux, sessionID, "polecat", runtimeConfig)
 
 	// Inject startup nudge for predecessor discovery via /resume
 	address := fmt.Sprintf("%s/polecats/%s", m.rig.Name, polecat)

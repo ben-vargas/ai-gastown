@@ -466,6 +466,10 @@ func (d *Daemon) getStartCommand(roleConfig *beads.RoleConfig, parsed *ParsedIde
 
 	// Default command for all agents - use runtime config
 	defaultCmd := "exec " + config.GetRuntimeCommand(rigPath)
+	runtimeConfig := config.LoadRuntimeConfig(rigPath)
+	if runtimeConfig.Session != nil && runtimeConfig.Session.SessionIDEnv != "" {
+		defaultCmd = config.PrependEnv(defaultCmd, map[string]string{"GT_SESSION_ID_ENV": runtimeConfig.Session.SessionIDEnv})
+	}
 
 	// Polecats need environment variables set in the command
 	if parsed.RoleType == "polecat" {

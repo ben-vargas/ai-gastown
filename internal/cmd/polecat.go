@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
@@ -89,7 +90,6 @@ Examples:
 	RunE: runPolecatRemove,
 }
 
-
 var polecatSyncCmd = &cobra.Command{
 	Use:   "sync <rig>/<polecat>",
 	Short: "Sync beads for a polecat",
@@ -129,15 +129,15 @@ Examples:
 }
 
 var (
-	polecatSyncAll      bool
-	polecatSyncFromMain bool
-	polecatStatusJSON   bool
-	polecatGitStateJSON bool
-	polecatGCDryRun           bool
-	polecatNukeAll            bool
-	polecatNukeDryRun         bool
-	polecatNukeForce          bool
-	polecatCheckRecoveryJSON  bool
+	polecatSyncAll           bool
+	polecatSyncFromMain      bool
+	polecatStatusJSON        bool
+	polecatGitStateJSON      bool
+	polecatGCDryRun          bool
+	polecatNukeAll           bool
+	polecatNukeDryRun        bool
+	polecatNukeForce         bool
+	polecatCheckRecoveryJSON bool
 )
 
 var polecatGCCmd = &cobra.Command{
@@ -975,7 +975,7 @@ type RecoveryStatus struct {
 	NeedsRecovery bool                  `json:"needs_recovery"`
 	Verdict       string                `json:"verdict"` // SAFE_TO_NUKE or NEEDS_RECOVERY
 	Branch        string                `json:"branch,omitempty"`
-	Issue         string `json:"issue,omitempty"`
+	Issue         string                `json:"issue,omitempty"`
 }
 
 func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
@@ -1477,7 +1477,7 @@ func runPolecatNuke(cmd *cobra.Command, args []string) error {
 		// Step 5: Close agent bead (if exists)
 		agentBeadID := beads.PolecatBeadID(p.rigName, p.polecatName)
 		closeArgs := []string{"close", agentBeadID, "--reason=nuked"}
-		if sessionID := os.Getenv("CLAUDE_SESSION_ID"); sessionID != "" {
+		if sessionID := runtime.SessionIDFromEnv(); sessionID != "" {
 			closeArgs = append(closeArgs, "--session="+sessionID)
 		}
 		closeCmd := exec.Command("bd", closeArgs...)

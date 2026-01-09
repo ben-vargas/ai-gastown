@@ -357,9 +357,13 @@ func buildRestartCommand(sessionName string) (string, error) {
 	// Build environment exports - role vars first, then Claude vars
 	var exports []string
 	if gtRole != "" {
-		exports = append(exports, fmt.Sprintf("GT_ROLE=%s", gtRole))
-		exports = append(exports, fmt.Sprintf("BD_ACTOR=%s", gtRole))
-		exports = append(exports, fmt.Sprintf("GIT_AUTHOR_NAME=%s", gtRole))
+		runtimeConfig := config.LoadRuntimeConfig("")
+		exports = append(exports, "GT_ROLE="+gtRole)
+		exports = append(exports, "BD_ACTOR="+gtRole)
+		exports = append(exports, "GIT_AUTHOR_NAME="+gtRole)
+		if runtimeConfig.Session != nil && runtimeConfig.Session.SessionIDEnv != "" {
+			exports = append(exports, "GT_SESSION_ID_ENV="+runtimeConfig.Session.SessionIDEnv)
+		}
 	}
 
 	// Add Claude-related env vars from current environment

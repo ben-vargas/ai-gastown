@@ -778,11 +778,17 @@ func TestMessagingConfigPath(t *testing.T) {
 
 func TestRuntimeConfigDefaults(t *testing.T) {
 	rc := DefaultRuntimeConfig()
+	if rc.Provider != "claude" {
+		t.Errorf("Provider = %q, want %q", rc.Provider, "claude")
+	}
 	if rc.Command != "claude" {
 		t.Errorf("Command = %q, want %q", rc.Command, "claude")
 	}
 	if len(rc.Args) != 1 || rc.Args[0] != "--dangerously-skip-permissions" {
 		t.Errorf("Args = %v, want [--dangerously-skip-permissions]", rc.Args)
+	}
+	if rc.Session == nil || rc.Session.SessionIDEnv != "CLAUDE_SESSION_ID" {
+		t.Errorf("SessionIDEnv = %q, want %q", rc.Session.SessionIDEnv, "CLAUDE_SESSION_ID")
 	}
 }
 

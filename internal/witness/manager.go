@@ -183,6 +183,7 @@ func (m *Manager) Start(foreground bool) error {
 	// Export GT_ROLE and BD_ACTOR in the command since tmux SetEnvironment only affects new panes
 	// Pass m.rig.Path so rig agent settings are honored (not town-level defaults)
 	command := config.BuildAgentStartupCommand("witness", bdActor, m.rig.Path, "")
+	runtimeConfig := config.LoadRuntimeConfig(m.rig.Path)
 	// Wait for shell to be ready before sending keys (prevents "can't find pane" under load)
 	if err := t.WaitForShellReady(sessionID, 5*time.Second); err != nil {
 		_ = t.KillSession(sessionID)
@@ -193,9 +194,8 @@ func (m *Manager) Start(foreground bool) error {
 		return fmt.Errorf("starting Claude agent: %w", err)
 	}
 
-	// Wait for Claude to start and show its prompt (non-fatal)
-	// WaitForClaudeReady waits for "> " prompt, more reliable than just checking node is running
-	if err := t.WaitForClaudeReady(sessionID, constants.ClaudeStartTimeout); err != nil {
+	// Wait for runtime to start and show its prompt (non-fatal)
+	if err := t.WaitForRuntimeReady(sessionID, runtimeConfig, constants.ClaudeStartTimeout); err != nil {
 		// Non-fatal - try to continue anyway
 	}
 
