@@ -77,7 +77,7 @@ Work tracking units. Bundle multiple beads that get assigned to agents.
 
 Git-backed issue tracking system that stores work state as structured data.
 
-**Bead IDs** use a prefix + 5-character alphanumeric format (e.g., `gt-abc12`, `hq-x7k2m`). The prefix indicates the bead's origin or purpose. Commands like `gt sling` and `gt convoy` accept these bead IDs to reference specific work items.
+**Bead IDs** (also called **issue IDs**) use a prefix + 5-character alphanumeric format (e.g., `gt-abc12`, `hq-x7k2m`). The prefix indicates the item's origin or rig. Commands like `gt sling` and `gt convoy` accept these IDs to reference specific work items. The terms "bead" and "issue" are used interchangeably—beads are the underlying data format, while issues are the work items stored as beads.
 
 > **New to Gas Town?** See the [Glossary](docs/glossary.md) for a complete guide to terminology and concepts.
 
@@ -278,8 +278,8 @@ bd mol pour release --var version=1.2.0
 # Create convoy manually
 gt convoy create "Bug Fixes" --human
 
-# Add beads to convoy
-gt convoy add-issue gt-m3k9p gt-w5t2x
+# Add issues to existing convoy
+gt convoy add hq-cv-abc gt-m3k9p gt-w5t2x
 
 # Assign to specific agents
 gt sling gt-m3k9p myproject/my-agent
@@ -339,10 +339,10 @@ gt prime                    # Context recovery (run inside existing session)
 ### Convoy (Work Tracking)
 
 ```bash
-gt convoy create <name> [bead-ids...] # Create convoy with beads
+gt convoy create <name> [issues...]   # Create convoy with issues
 gt convoy list              # List all convoys
 gt convoy show [id]         # Show convoy details
-gt convoy add-issue <bead-id> # Add bead to convoy
+gt convoy add <convoy-id> <issue-id...>  # Add issues to convoy
 ```
 
 ### Configuration
