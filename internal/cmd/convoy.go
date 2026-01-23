@@ -309,6 +309,12 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Ensure custom types (including 'convoy') are registered in town beads.
+	// This handles cases where install didn't complete or beads was initialized manually.
+	if err := beads.EnsureCustomTypes(townBeads); err != nil {
+		return fmt.Errorf("ensuring custom types: %w", err)
+	}
+
 	// Create convoy issue in town beads
 	description := fmt.Sprintf("Convoy tracking %d issues", len(trackedIssues))
 
