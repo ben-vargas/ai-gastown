@@ -20,6 +20,7 @@ var (
 	ErrDogNotFound = errors.New("dog not found")
 	ErrDogWorking  = errors.New("dog is currently working")
 	ErrNoRigs      = errors.New("no rigs configured")
+	ErrInvalidName = errors.New("invalid dog name")
 )
 
 // Manager handles dog lifecycle in the kennel.
@@ -38,13 +39,16 @@ func NewManager(townRoot string, rigsConfig *config.RigsConfig) *Manager {
 	}
 }
 
-// validateName checks that a dog name is non-empty and contains no path separators or traversal.
-func validateName(name string) error {
+// validateDogName checks that a dog name is safe for use as a directory name.
+func validateDogName(name string) error {
 	if name == "" {
-		return errors.New("dog name must not be empty")
+		return fmt.Errorf("%w: name cannot be empty", ErrInvalidName)
 	}
-	if strings.ContainsAny(name, "/\\") || name == "." || name == ".." || strings.Contains(name, "..") {
-		return fmt.Errorf("invalid dog name %q: must not contain path separators or traversal", name)
+	if strings.ContainsAny(name, "/\\") {
+		return fmt.Errorf("%w: name cannot contain path separators", ErrInvalidName)
+	}
+	if name == "." || name == ".." || strings.Contains(name, "..") {
+		return fmt.Errorf("%w: name cannot contain path traversal", ErrInvalidName)
 	}
 	return nil
 }
@@ -69,7 +73,7 @@ func (m *Manager) stateFilePath(name string) string {
 // Each dog gets a worktree per rig (e.g., dogs/alpha/gastown/, dogs/alpha/beads/).
 // Worktrees are created from each rig's bare repo (.repo.git) or mayor/rig.
 func (m *Manager) Add(name string) (*Dog, error) {
-	if err := validateName(name); err != nil {
+	if err := validateDogName(name); err != nil {
 		return nil, err
 	}
 	if m.exists(name) {
@@ -190,7 +194,7 @@ func (m *Manager) findRepoBase(rigPath string) (*git.Git, error) {
 // Remove deletes a dog from the kennel.
 // Removes all worktrees and the dog directory.
 func (m *Manager) Remove(name string) error {
-	if err := validateName(name); err != nil {
+	if err := validateDogName(name); err != nil {
 		return err
 	}
 	if !m.exists(name) {
@@ -263,6 +267,9 @@ func (m *Manager) List() ([]*Dog, error) {
 // Get returns a specific dog by name.
 // Returns ErrDogNotFound if the dog directory or .dog.json state file doesn't exist.
 func (m *Manager) Get(name string) (*Dog, error) {
+	if err := validateDogName(name); err != nil {
+		return nil, err
+	}
 	if !m.exists(name) {
 		return nil, ErrDogNotFound
 	}
@@ -287,6 +294,9 @@ func (m *Manager) Get(name string) (*Dog, error) {
 
 // SetState updates a dog's state and last-active timestamp.
 func (m *Manager) SetState(name string, state State) error {
+	if err := validateDogName(name); err != nil {
+		return err
+	}
 	if !m.exists(name) {
 		return ErrDogNotFound
 	}
@@ -305,6 +315,9 @@ func (m *Manager) SetState(name string, state State) error {
 
 // AssignWork assigns work to a dog and sets it to working state.
 func (m *Manager) AssignWork(name, work string) error {
+	if err := validateDogName(name); err != nil {
+		return err
+	}
 	if !m.exists(name) {
 		return ErrDogNotFound
 	}
@@ -324,6 +337,9 @@ func (m *Manager) AssignWork(name, work string) error {
 
 // ClearWork clears a dog's work assignment and sets it to idle.
 func (m *Manager) ClearWork(name string) error {
+	if err := validateDogName(name); err != nil {
+		return err
+	}
 	if !m.exists(name) {
 		return ErrDogNotFound
 	}
@@ -346,6 +362,9 @@ func (m *Manager) ClearWork(name string) error {
 // Each rig is refreshed atomically with a state save, so a failure at rig N
 // leaves rigs 1..N-1 correctly updated and rigs N+1..M untouched.
 func (m *Manager) Refresh(name string) error {
+	if err := validateDogName(name); err != nil {
+		return err
+	}
 	if !m.exists(name) {
 		return ErrDogNotFound
 	}
@@ -413,6 +432,9 @@ func (m *Manager) Refresh(name string) error {
 
 // RefreshRig recreates the worktree for a specific rig.
 func (m *Manager) RefreshRig(name, rigName string) error {
+	if err := validateDogName(name); err != nil {
+		return err
+	}
 	if !m.exists(name) {
 		return ErrDogNotFound
 	}
