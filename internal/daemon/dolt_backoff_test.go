@@ -616,13 +616,24 @@ func TestConcurrentEnsureRunning_BackoffSleepReleasesLock(t *testing.T) {
 // server running but unhealthy -> stop -> restart with backoff.
 func TestEnsureRunning_UnhealthyTriggersRestart(t *testing.T) {
 	var stopCount, startCount atomic.Int32
+	var running atomic.Bool
+	running.Store(true) // Server starts as running
 
 	m := newTestManager(t)
-	m.runningFn = func() (int, bool) { return 1234, true }
+	m.runningFn = func() (int, bool) {
+		if running.Load() {
+			return 1234, true
+		}
+		return 0, false
+	}
 	m.healthCheckFn = func() error { return fmt.Errorf("connection refused") }
-	m.stopFn = func() { stopCount.Add(1) }
+	m.stopFn = func() {
+		stopCount.Add(1)
+		running.Store(false) // Stop marks server as not running
+	}
 	m.startFn = func() error {
 		startCount.Add(1)
+		running.Store(true) // Start marks server as running
 		return nil
 	}
 	m.sleepFn = func(d time.Duration) {} // instant
