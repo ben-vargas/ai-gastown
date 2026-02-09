@@ -61,6 +61,9 @@ func NewCurator(townRoot string) *Curator {
 	cfg := config.DefaultFeedCuratorConfig()
 	if townRoot != "" {
 		if ts, err := config.LoadOrCreateTownSettings(config.TownSettingsPath(townRoot)); err == nil && ts.FeedCurator != nil {
+			// Replace entire default — individual fields fall back below.
+			// Duration fields get fallbacks via ParseDurationOrDefault (empty string → default).
+			// Non-duration fields need explicit zero-value guards.
 			cfg = ts.FeedCurator
 		}
 	}

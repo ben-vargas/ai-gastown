@@ -89,6 +89,8 @@ func NewLiveConvoyFetcher() (*LiveConvoyFetcher, error) {
 	webCfg := config.DefaultWebTimeoutsConfig()
 	workerCfg := config.DefaultWorkerStatusConfig()
 	if ts, err := config.LoadOrCreateTownSettings(config.TownSettingsPath(townRoot)); err == nil {
+		// Replace entire defaults — individual fields fall back via ParseDurationOrDefault
+		// (empty string → hardcoded default). Add explicit zero-value guards for non-duration fields.
 		if ts.WebTimeouts != nil {
 			webCfg = ts.WebTimeouts
 		}
