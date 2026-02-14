@@ -144,6 +144,17 @@ func ParseSessionName(session string) (*AgentIdentity, error) {
 		}
 	}
 
+	// Legacy format: gt-witness-<rig> or gt-refinery-<rig>
+	// (role appears before rig, opposite of canonical format)
+	if parts[0] == "witness" && len(parts) >= 2 {
+		rig := strings.Join(parts[1:], "-")
+		return &AgentIdentity{Role: RoleWitness, Rig: rig}, nil
+	}
+	if parts[0] == "refinery" && len(parts) >= 2 {
+		rig := strings.Join(parts[1:], "-")
+		return &AgentIdentity{Role: RoleRefinery, Rig: rig}, nil
+	}
+
 	// Default to polecat: rig is everything except the last segment
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("invalid session name %q: cannot determine rig/name", session)

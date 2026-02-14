@@ -535,7 +535,24 @@ func sessionNameToAddress(sessionName string) string {
 	if err != nil {
 		return ""
 	}
-	return identity.Address()
+
+	// Use short address format: rig/name (not rig/polecats/name)
+	switch identity.Role {
+	case session.RoleMayor:
+		return "mayor"
+	case session.RoleDeacon:
+		return "deacon"
+	case session.RoleWitness:
+		return fmt.Sprintf("%s/witness", identity.Rig)
+	case session.RoleRefinery:
+		return fmt.Sprintf("%s/refinery", identity.Rig)
+	case session.RoleCrew:
+		return fmt.Sprintf("%s/crew/%s", identity.Rig, identity.Name)
+	case session.RolePolecat:
+		return fmt.Sprintf("%s/%s", identity.Rig, identity.Name)
+	default:
+		return ""
+	}
 }
 
 // addressToAgentBeadID converts a target address to an agent bead ID.

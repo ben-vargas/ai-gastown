@@ -92,6 +92,34 @@ func TestParseSessionName(t *testing.T) {
 			wantName: "Toast",
 		},
 
+		// Legacy format: gt-witness-<rig> (role before rig)
+		{
+			name:     "legacy witness",
+			session:  "gt-witness-gastown",
+			wantRole: RoleWitness,
+			wantRig:  "gastown",
+		},
+		{
+			name:     "legacy witness hyphenated rig",
+			session:  "gt-witness-foo-bar",
+			wantRole: RoleWitness,
+			wantRig:  "foo-bar",
+		},
+		{
+			name:     "legacy refinery",
+			session:  "gt-refinery-gastown",
+			wantRole: RoleRefinery,
+			wantRig:  "gastown",
+		},
+
+		// Boot watchdog
+		{
+			name:     "boot",
+			session:  "gt-boot",
+			wantRole: RoleDeacon,
+			wantName: "boot",
+		},
+
 		// Error cases
 		{
 			name:    "missing prefix",

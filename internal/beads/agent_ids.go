@@ -419,12 +419,9 @@ func ParseAgentBeadID(id string) (rig, role, name string, ok bool) {
 		return "", "", "", false
 	}
 
-	// Single part: town-level role (gt-mayor, bd-deacon)
+	// Single part: town-level role (gt-mayor, bd-deacon) or unknown
 	if len(parts) == 1 {
-		if isTownLevelRole(parts[0]) {
-			return "", parts[0], "", true
-		}
-		return "", "", "", false
+		return "", parts[0], "", true
 	}
 
 	// Check for town-level named roles (dog) first

@@ -234,12 +234,28 @@ func (c *OrphanSessionCheck) isValidSession(sess string, validRigs []string, may
 		return true
 	}
 
-	// Check if this rig exists
+	// Check if this rig exists.
+	// For polecats, ParseSessionName assumes rig = everything except last segment,
+	// but polecat names can contain hyphens (e.g., gt-niflheim-fix-auth-bug where
+	// rig=niflheim, name=fix-auth-bug). If the initial parse doesn't match a valid
+	// rig, check if any valid rig is a prefix of the session suffix.
 	rigFound := false
 	for _, r := range validRigs {
 		if r == rigName {
 			rigFound = true
 			break
+		}
+	}
+
+	if !rigFound && identity.Role == session.RolePolecat {
+		// Try alternate rig interpretations: check if any valid rig
+		// is a prefix of the session suffix (after gt-)
+		suffix := strings.TrimPrefix(sess, session.Prefix)
+		for _, r := range validRigs {
+			if strings.HasPrefix(suffix, r+"-") {
+				rigFound = true
+				break
+			}
 		}
 	}
 
