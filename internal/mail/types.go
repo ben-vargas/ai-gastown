@@ -124,9 +124,9 @@ type Message struct {
 	// Only set for queue messages after claiming.
 	ClaimedAt *time.Time `json:"claimed_at,omitempty"`
 
-	// SuppressNotify is an in-memory delivery hint telling the router's
-	// sendToSingle not to enqueue its own nudge notification. The CLI sets
-	// this when it handles idle-check + immediate delivery itself.
+	// SuppressNotify tells the router to skip all recipient notification
+	// (no nudge, no banner). Set by the CLI when --no-notify is passed.
+	// In-memory only — not serialized.
 	SuppressNotify bool `json:"-"`
 }
 
