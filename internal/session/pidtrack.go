@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -10,6 +11,13 @@ import (
 
 	"github.com/steveyegge/gastown/internal/tmux"
 )
+
+var pidStartTimeFunc = processStartTime
+
+type trackedPID struct {
+	PID       int
+	StartTime string
+}
 
 // pidsDir returns the directory for PID tracking files.
 // All PID files live under <townRoot>/.runtime/pids/ since tmux session
@@ -53,7 +61,11 @@ func TrackPID(townRoot, sessionID string, pid int) error {
 	}
 
 	path := pidFile(townRoot, sessionID)
-	return os.WriteFile(path, []byte(strconv.Itoa(pid)+"\n"), 0644)
+	record := strconv.Itoa(pid)
+	if start, err := pidStartTimeFunc(pid); err == nil && start != "" {
+		record = fmt.Sprintf("%d|%s", pid, start)
+	}
+	return os.WriteFile(path, []byte(record+"\n"), 0644)
 }
 
 // UntrackPID removes the PID tracking file for a session.
@@ -92,12 +104,13 @@ func KillTrackedPIDs(townRoot string) (killed int, errSessions []string) {
 			continue
 		}
 
-		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+		record, err := parseTrackedPID(strings.TrimSpace(string(data)))
 		if err != nil {
 			// Corrupt PID file — remove it
 			_ = os.Remove(path)
 			continue
 		}
+		pid := record.PID
 
 		// Check if process is still alive
 		proc, err := os.FindProcess(pid)
@@ -113,6 +126,16 @@ func KillTrackedPIDs(townRoot string) (killed int, errSessions []string) {
 			continue
 		}
 
+		// If we have process birth info, verify this is still the same process.
+		// If PID was reused, skip killing to avoid terminating an active unrelated process.
+		if record.StartTime != "" {
+			currentStart, startErr := pidStartTimeFunc(pid)
+			if startErr != nil || currentStart != record.StartTime {
+				_ = os.Remove(path)
+				continue
+			}
+		}
+
 		// Process is alive — kill it
 		if err := proc.Signal(syscall.SIGTERM); err != nil {
 			errSessions = append(errSessions, fmt.Sprintf("%s (PID %d): SIGTERM failed: %v", sessionID, pid, err))
@@ -125,4 +148,28 @@ func KillTrackedPIDs(townRoot string) (killed int, errSessions []string) {
 	}
 
 	return killed, errSessions
+}
+
+func parseTrackedPID(value string) (trackedPID, error) {
+	if value == "" {
+		return trackedPID{}, fmt.Errorf("empty pid record")
+	}
+	parts := strings.SplitN(value, "|", 2)
+	pid, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return trackedPID{}, err
+	}
+	record := trackedPID{PID: pid}
+	if len(parts) == 2 {
+		record.StartTime = parts[1]
+	}
+	return record, nil
+}
+
+func processStartTime(pid int) (string, error) {
+	out, err := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }

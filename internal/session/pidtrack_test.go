@@ -3,12 +3,20 @@ package session
 import (
 	"os"
 	"path/filepath"
-	"strconv"
+	"strings"
 	"testing"
 )
 
 func TestTrackPID_WritesFile(t *testing.T) {
 	townRoot := t.TempDir()
+	originalStartFn := pidStartTimeFunc
+	t.Cleanup(func() { pidStartTimeFunc = originalStartFn })
+	pidStartTimeFunc = func(pid int) (string, error) {
+		if pid != 12345 {
+			t.Fatalf("unexpected PID: %d", pid)
+		}
+		return "Mon Jan  1 00:00:00 2026", nil
+	}
 
 	if err := TrackPID(townRoot, "gt-myrig-witness", 12345); err != nil {
 		t.Fatalf("TrackPID() error = %v", err)
@@ -20,8 +28,8 @@ func TestTrackPID_WritesFile(t *testing.T) {
 		t.Fatalf("reading PID file: %v", err)
 	}
 
-	if got := string(data); got != "12345\n" {
-		t.Errorf("PID file content = %q, want %q", got, "12345\n")
+	if got := string(data); got != "12345|Mon Jan  1 00:00:00 2026\n" {
+		t.Errorf("PID file content = %q, want start-time tracked format", got)
 	}
 }
 
@@ -163,16 +171,50 @@ func TestKillTrackedPIDs_KillsSelf(t *testing.T) {
 		t.Fatalf("reading PID file: %v", err)
 	}
 
-	got, err := strconv.Atoi(string(data[:len(data)-1])) // trim newline
+	record, err := parseTrackedPID(strings.TrimSpace(string(data)))
 	if err != nil {
-		t.Fatalf("parsing PID from file: %v", err)
+		t.Fatalf("parseTrackedPID() error = %v", err)
 	}
-	if got != myPID {
-		t.Errorf("PID = %d, want %d", got, myPID)
+	if record.PID != myPID {
+		t.Errorf("PID = %d, want %d", record.PID, myPID)
 	}
 
 	// Clean up without killing ourselves
 	UntrackPID(townRoot, "gt-self-test")
+}
+
+func TestKillTrackedPIDs_SkipsPidReuse(t *testing.T) {
+	townRoot := t.TempDir()
+	dir := pidsDir(townRoot)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate stale record where pid has since been reused with a new start time.
+	path := filepath.Join(dir, "gt-reused.pid")
+	if err := os.WriteFile(path, []byte("1|old-start\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	originalStartFn := pidStartTimeFunc
+	t.Cleanup(func() { pidStartTimeFunc = originalStartFn })
+	pidStartTimeFunc = func(pid int) (string, error) {
+		if pid == 1 {
+			return "new-start", nil
+		}
+		return "", os.ErrNotExist
+	}
+
+	killed, errs := KillTrackedPIDs(townRoot)
+	if killed != 0 {
+		t.Errorf("killed = %d, want 0 (pid reuse should be skipped)", killed)
+	}
+	if len(errs) != 0 {
+		t.Errorf("errs = %v, want empty", errs)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("PID file should be removed when pid reuse is detected")
+	}
 }
 
 func TestPidFile_Path(t *testing.T) {
