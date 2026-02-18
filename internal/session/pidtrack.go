@@ -12,6 +12,8 @@ import (
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
+// pidStartTimeFunc is overridden in tests. This package's tests must NOT use
+// t.Parallel() because they mutate this package-level variable without synchronization.
 var pidStartTimeFunc = processStartTime
 
 type trackedPID struct {
@@ -130,7 +132,14 @@ func KillTrackedPIDs(townRoot string) (killed int, errSessions []string) {
 		// If PID was reused, skip killing to avoid terminating an active unrelated process.
 		if record.StartTime != "" {
 			currentStart, startErr := pidStartTimeFunc(pid)
-			if startErr != nil || currentStart != record.StartTime {
+			if startErr != nil {
+				// Cannot verify process identity — leave the PID file so a
+				// future cleanup attempt can retry once ps is available again.
+				errSessions = append(errSessions, fmt.Sprintf("%s (PID %d): cannot verify start time: %v — skipping kill, preserving tracking file", sessionID, pid, startErr))
+				continue
+			}
+			if currentStart != record.StartTime {
+				// Confirmed PID reuse — safe to remove tracking file.
 				_ = os.Remove(path)
 				continue
 			}
@@ -166,8 +175,13 @@ func parseTrackedPID(value string) (trackedPID, error) {
 	return record, nil
 }
 
+// processStartTime returns the start time of a process via ps(1).
+// This works on Linux and macOS. On Windows (or minimal containers without ps),
+// the call will fail and callers degrade gracefully to PID-only tracking.
 func processStartTime(pid int) (string, error) {
-	out, err := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
+	cmd := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid))
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
