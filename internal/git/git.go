@@ -1082,7 +1082,12 @@ func (g *Git) CountCommitsBehind(ref string) (int, error) {
 	return count, nil
 }
 
-// StashCount returns the number of stashes in the repository.
+// StashCount returns the number of stashes belonging to the current branch.
+// Git stashes are stored in the main repo (.git/refs/stash) and shared across
+// all worktrees. Counting all stashes is incorrect for worktree-based polecats:
+// a fresh polecat worktree would inherit stash count from siblings, blocking
+// Remove(force=true) on work it never created. Filter by current branch name
+// to only count stashes that actually belong to this worktree.
 func (g *Git) StashCount() (int, error) {
 	out, err := g.run("stash", "list")
 	if err != nil {
@@ -1093,13 +1098,26 @@ func (g *Git) StashCount() (int, error) {
 		return 0, nil
 	}
 
-	// Count lines in the stash list
+	// Get current branch to filter stashes.
+	// If we can't determine the branch (detached HEAD, error), count all
+	// stashes as a safe fallback — better to over-count than silently lose work.
+	branch, branchErr := g.CurrentBranch()
+	filterByBranch := branchErr == nil && branch != "" && branch != "HEAD"
+
 	lines := strings.Split(out, "\n")
 	count := 0
 	for _, line := range lines {
-		if line != "" {
-			count++
+		if line == "" {
+			continue
 		}
+		if filterByBranch {
+			// Stash reflog messages use "WIP on <branch>:" or "On <branch>:" format.
+			// Only count stashes that were created on the current branch.
+			if !strings.Contains(line, "on "+branch+":") && !strings.Contains(line, "On "+branch+":") {
+				continue
+			}
+		}
+		count++
 	}
 	return count, nil
 }

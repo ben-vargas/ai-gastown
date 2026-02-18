@@ -1310,3 +1310,84 @@ func TestGetPushURL_NoPushURL(t *testing.T) {
 		t.Errorf("GetPushURL = %q, want fetch URL when no push URL configured", got)
 	}
 }
+
+// TestStashCount_FiltersByBranch verifies that StashCount only counts stashes
+// belonging to the current branch, not stashes from other worktrees/branches.
+// Git stashes are repo-wide (stored in .git/refs/stash), so without filtering
+// a worktree would see sibling stashes and block Remove(force=true).
+func TestStashCount_FiltersByBranch(t *testing.T) {
+	t.Parallel()
+	dir := initTestRepo(t)
+	g := NewGit(dir)
+
+	// Create a stash on the default branch
+	if err := os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("dirty"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "add", ".")
+	cmd.Dir = dir
+	_ = cmd.Run()
+	cmd = exec.Command("git", "stash", "push", "-m", "main-stash")
+	cmd.Dir = dir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git stash: %v", err)
+	}
+
+	// Create a worktree on a different branch
+	wtDir := t.TempDir()
+	cmd = exec.Command("git", "worktree", "add", wtDir, "-b", "polecat-branch")
+	cmd.Dir = dir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git worktree add: %v", err)
+	}
+
+	// StashCount from worktree should be 0 (stash belongs to main, not polecat-branch)
+	wtGit := NewGit(wtDir)
+	count, err := wtGit.StashCount()
+	if err != nil {
+		t.Fatalf("StashCount: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("StashCount from worktree = %d, want 0 (stash belongs to different branch)", count)
+	}
+
+	// StashCount from main repo should be 1
+	mainCount, err := g.StashCount()
+	if err != nil {
+		t.Fatalf("StashCount: %v", err)
+	}
+	if mainCount != 1 {
+		t.Errorf("StashCount from main = %d, want 1", mainCount)
+	}
+
+	// Create a stash on the worktree branch
+	if err := os.WriteFile(filepath.Join(wtDir, "wt-dirty.txt"), []byte("wt-dirty"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("git", "add", ".")
+	cmd.Dir = wtDir
+	_ = cmd.Run()
+	cmd = exec.Command("git", "stash", "push", "-m", "wt-stash")
+	cmd.Dir = wtDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git stash in worktree: %v", err)
+	}
+
+	// Now worktree should see 1 (its own stash)
+	count, err = wtGit.StashCount()
+	if err != nil {
+		t.Fatalf("StashCount: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("StashCount from worktree after own stash = %d, want 1", count)
+	}
+
+	// Main repo should still see 1 (only its own stash)
+	mainCount, err = g.StashCount()
+	if err != nil {
+		t.Fatalf("StashCount: %v", err)
+	}
+	if mainCount != 1 {
+		t.Errorf("StashCount from main after worktree stash = %d, want 1", mainCount)
+	}
+}
