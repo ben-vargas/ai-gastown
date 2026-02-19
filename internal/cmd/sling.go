@@ -126,6 +126,7 @@ var (
 	slingBaseBranch    string // --base-branch: override base branch for polecat worktree
 	slingRalph         bool   // --ralph: enable Ralph Wiggum loop mode for multi-step workflows
 	slingQueue         bool   // --queue: defer dispatch via work queue instead of immediate sling
+	slingFormula       string // --formula: override formula for dispatch (default: mol-polecat-work)
 )
 
 func init() {
@@ -152,6 +153,7 @@ func init() {
 	slingCmd.Flags().StringVar(&slingBaseBranch, "base-branch", "", "Override base branch for polecat worktree (e.g., 'develop', 'release/v2')")
 	slingCmd.Flags().BoolVar(&slingRalph, "ralph", false, "Enable Ralph Wiggum loop mode (fresh context per step, for multi-step workflows)")
 	slingCmd.Flags().BoolVar(&slingQueue, "queue", false, "Defer dispatch via work queue instead of immediate sling")
+	slingCmd.Flags().StringVar(&slingFormula, "formula", "", "Formula to apply (default: mol-polecat-work for polecat targets)")
 
 	rootCmd.AddCommand(slingCmd)
 }
@@ -260,6 +262,9 @@ func runSling(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("--queue requires a rig target (got %q)", args[len(args)-1])
 		}
 		formulaName := args[0]
+		if slingHookRawBead {
+			formulaName = ""
+		}
 		beadID := slingOnTarget
 		return enqueueBead(beadID, rigName, EnqueueOptions{
 			Formula:     formulaName,
@@ -293,11 +298,8 @@ func runSling(cmd *cobra.Command, args []string) error {
 			}
 		}
 		beadID := args[0]
-		// Auto-apply mol-polecat-work formula unless --hook-raw-bead
-		formula := ""
-		if !slingHookRawBead {
-			formula = "mol-polecat-work"
-		}
+		// Auto-apply formula unless --hook-raw-bead
+		formula := resolveFormula(slingFormula, slingHookRawBead)
 		return enqueueBead(beadID, rigName, EnqueueOptions{
 			Formula:     formula,
 			Args:        slingArgs,
@@ -602,8 +604,12 @@ func runSling(cmd *cobra.Command, args []string) error {
 	// This ensures polecats get structured work guidance through formula-on-bead.
 	// Use --hook-raw-bead to bypass for expert/debugging scenarios.
 	if formulaName == "" && !slingHookRawBead && strings.Contains(targetAgent, "/polecats/") {
-		formulaName = "mol-polecat-work"
-		fmt.Printf("  Auto-applying %s for polecat work...\n", formulaName)
+		formulaName = resolveFormula(slingFormula, false)
+		if slingFormula != "" {
+			fmt.Printf("  Applying %s for polecat work...\n", formulaName)
+		} else {
+			fmt.Printf("  Auto-applying %s for polecat work...\n", formulaName)
+		}
 	}
 
 	// Guard: ensure only one molecule is attached to a work bead.

@@ -35,11 +35,22 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 		}
 	}
 
+	// Issue #288: Auto-apply formula for batch sling (resolved via flags)
+	formulaName := resolveFormula(slingFormula, slingHookRawBead)
+
 	if slingDryRun {
 		fmt.Printf("%s Batch slinging %d beads to rig '%s':\n", style.Bold.Render("🎯"), len(beadIDs), rigName)
-		fmt.Printf("  Would cook mol-polecat-work formula once\n")
+		if formulaName != "" {
+			fmt.Printf("  Would cook %s formula once\n", formulaName)
+		} else {
+			fmt.Printf("  Would hook raw beads (no formula)\n")
+		}
 		for _, beadID := range beadIDs {
-			fmt.Printf("  Would spawn polecat and apply mol-polecat-work to: %s\n", beadID)
+			if formulaName != "" {
+				fmt.Printf("  Would spawn polecat and apply %s to: %s\n", formulaName, beadID)
+			} else {
+				fmt.Printf("  Would spawn polecat and hook raw: %s\n", beadID)
+			}
 		}
 		return nil
 	}
@@ -50,19 +61,19 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 		fmt.Printf("  Max concurrent spawns: %d\n", slingMaxConcurrent)
 	}
 
-	// Issue #288: Auto-apply mol-polecat-work for batch sling
-	// Cook once before the loop for efficiency
+	// Cook formula once before the loop for efficiency
 	townRoot := filepath.Dir(townBeadsDir)
-	formulaName := "mol-polecat-work"
 	formulaCooked := false
 
 	// Pre-cook formula before the loop (batch optimization: cook once, instantiate many)
-	workDir := beads.ResolveHookDir(townRoot, beadIDs[0], "")
-	if err := CookFormula(formulaName, workDir, townRoot); err != nil {
-		fmt.Printf("  %s Could not pre-cook formula %s: %v\n", style.Dim.Render("Warning:"), formulaName, err)
-		// Fall back: each executeSling call will try to cook individually
-	} else {
-		formulaCooked = true
+	if formulaName != "" {
+		workDir := beads.ResolveHookDir(townRoot, beadIDs[0], "")
+		if err := CookFormula(formulaName, workDir, townRoot); err != nil {
+			fmt.Printf("  %s Could not pre-cook formula %s: %v\n", style.Dim.Render("Warning:"), formulaName, err)
+			// Fall back: each executeSling call will try to cook individually
+		} else {
+			formulaCooked = true
+		}
 	}
 
 	// Track results for summary

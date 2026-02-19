@@ -271,6 +271,28 @@ func TestNewQueueMetadata_SetsTimestamp(t *testing.T) {
 	}
 }
 
+func TestResolveFormula(t *testing.T) {
+	tests := []struct {
+		name        string
+		explicit    string
+		hookRawBead bool
+		want        string
+	}{
+		{"default", "", false, "mol-polecat-work"},
+		{"explicit formula", "my-custom", false, "my-custom"},
+		{"hook-raw-bead suppresses default", "", true, ""},
+		{"hook-raw-bead suppresses explicit", "my-custom", true, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveFormula(tt.explicit, tt.hookRawBead)
+			if got != tt.want {
+				t.Errorf("resolveFormula(%q, %v) = %q, want %q", tt.explicit, tt.hookRawBead, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestHasQueuedLabel(t *testing.T) {
 	tests := []struct {
 		name   string

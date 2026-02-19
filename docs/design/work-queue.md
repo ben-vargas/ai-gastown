@@ -27,9 +27,9 @@ gt queue run --dry-run    # Preview first
 
 | Command | Flags | Description |
 |---------|-------|-------------|
-| `gt sling <bead> <rig> --queue` | `--force`, `--merge`, `--args`, `--no-convoy` | Queue single bead |
-| `gt convoy queue <id>` | `--dry-run`, `--force` | Queue all open issues in convoy (auto-resolve rigs) |
-| `gt queue epic <id>` | `--dry-run`, `--force` | Queue all children of epic (auto-resolve rigs) |
+| `gt sling <bead> <rig> --queue` | `--force`, `--merge`, `--args`, `--no-convoy`, `--formula`, `--hook-raw-bead` | Queue single bead |
+| `gt convoy queue <id>` | `--dry-run`, `--force`, `--formula`, `--hook-raw-bead` | Queue all open issues in convoy (auto-resolve rigs) |
+| `gt queue epic <id>` | `--dry-run`, `--force`, `--formula`, `--hook-raw-bead` | Queue all children of epic (auto-resolve rigs) |
 | `gt queue run` | `--batch N`, `--max-polecats N`, `--dry-run` | Trigger dispatch manually |
 | `gt queue status` | `--json` | Show queue state and capacity |
 | `gt queue list` | `--json` | List all queued beads by rig |
@@ -122,11 +122,11 @@ Key invariant: `gt:queued` is always removed on terminal transitions. Dispatched
 
 | Command | Use Case | Formula |
 |---------|----------|---------|
-| `gt sling <bead> <rig> --queue` | Queue single bead | `mol-polecat-work` (auto) |
-| `gt sling <bead>... <rig> --queue` | Queue batch | `mol-polecat-work` (auto) |
+| `gt sling <bead> <rig> --queue` | Queue single bead | `mol-polecat-work` (auto, override with `--formula`) |
+| `gt sling <bead>... <rig> --queue` | Queue batch | `mol-polecat-work` (auto, override with `--formula`) |
 | `gt sling <formula> --on <bead> <rig> --queue` | Queue with explicit formula | User-specified |
-| `gt convoy queue <convoy-id>` | Queue all open convoy issues (auto-resolve rigs from prefix) | `mol-polecat-work` |
-| `gt queue epic <epic-id>` | Queue all children of epic (auto-resolve rigs from prefix) | `mol-polecat-work` |
+| `gt convoy queue <convoy-id>` | Queue all open convoy issues (auto-resolve rigs from prefix) | `mol-polecat-work` (override with `--formula`) |
+| `gt queue epic <epic-id>` | Queue all children of epic (auto-resolve rigs from prefix) | `mol-polecat-work` (override with `--formula`) |
 | `gt queue run` | Manual dispatch trigger | N/A (dispatches) |
 
 All enqueue paths go through `enqueueBead()` in `internal/cmd/sling_queue.go`. All dispatch goes through `dispatchQueuedWork()` in `internal/cmd/queue_dispatch.go`.

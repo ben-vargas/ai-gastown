@@ -14,8 +14,10 @@ import (
 )
 
 var (
-	queueEpicDryRun bool
-	queueEpicForce  bool
+	queueEpicDryRun  bool
+	queueEpicForce   bool
+	queueEpicFormula string
+	queueEpicHookRaw bool
 )
 
 var queueEpicCmd = &cobra.Command{
@@ -41,6 +43,8 @@ Examples:
 func init() {
 	queueEpicCmd.Flags().BoolVar(&queueEpicDryRun, "dry-run", false, "Show what would be queued without acting")
 	queueEpicCmd.Flags().BoolVar(&queueEpicForce, "force", false, "Force enqueue even if bead is hooked/in_progress")
+	queueEpicCmd.Flags().StringVar(&queueEpicFormula, "formula", "", "Formula to apply (default: mol-polecat-work)")
+	queueEpicCmd.Flags().BoolVar(&queueEpicHookRaw, "hook-raw-bead", false, "Hook raw bead without formula")
 
 	queueCmd.AddCommand(queueEpicCmd)
 }
@@ -123,9 +127,16 @@ func runQueueEpic(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	formula := resolveFormula(queueEpicFormula, queueEpicHookRaw)
+
 	if queueEpicDryRun {
 		fmt.Printf("%s Would queue %d child(ren) from epic %s:\n",
 			style.Bold.Render("📋"), len(candidates), epicID)
+		if formula != "" {
+			fmt.Printf("  Formula: %s\n", formula)
+		} else {
+			fmt.Printf("  Hook raw beads (no formula)\n")
+		}
 		for _, c := range candidates {
 			fmt.Printf("  Would queue: %s → %s (%s)\n", c.ID, c.RigName, c.Title)
 		}
@@ -142,8 +153,9 @@ func runQueueEpic(cmd *cobra.Command, args []string) error {
 	successCount := 0
 	for _, c := range candidates {
 		err := enqueueBead(c.ID, c.RigName, EnqueueOptions{
-			Formula: "mol-polecat-work",
-			Force:   queueEpicForce,
+			Formula:     formula,
+			Force:       queueEpicForce,
+			HookRawBead: queueEpicHookRaw,
 		})
 		if err != nil {
 			fmt.Printf("  %s %s: %v\n", style.Dim.Render("✗"), c.ID, err)

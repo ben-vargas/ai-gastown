@@ -242,11 +242,8 @@ func runBatchEnqueue(beadIDs []string, rigName string) {
 
 	successCount := 0
 	for _, beadID := range beadIDs {
-		// Auto-apply mol-polecat-work formula unless --hook-raw-bead
-		formula := "mol-polecat-work"
-		if slingHookRawBead {
-			formula = ""
-		}
+		// Resolve formula from flags
+		formula := resolveFormula(slingFormula, slingHookRawBead)
 		err := enqueueBead(beadID, rigName, EnqueueOptions{
 			Formula:     formula,
 			Args:        slingArgs,
@@ -308,6 +305,18 @@ func resolveRigForBead(townRoot, beadID string) string {
 		return ""
 	}
 	return beads.GetRigNameForPrefix(townRoot, prefix)
+}
+
+// resolveFormula determines the formula name from user flags.
+// Priority: --hook-raw-bead (suppresses all) > --formula (explicit) > default.
+func resolveFormula(explicit string, hookRawBead bool) string {
+	if hookRawBead {
+		return ""
+	}
+	if explicit != "" {
+		return explicit
+	}
+	return "mol-polecat-work"
 }
 
 // hasQueuedLabel checks if a bead has the gt:queued label.

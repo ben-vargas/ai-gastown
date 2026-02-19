@@ -11,8 +11,10 @@ import (
 )
 
 var (
-	convoyQueueDryRun bool
-	convoyQueueForce  bool
+	convoyQueueDryRun  bool
+	convoyQueueForce   bool
+	convoyQueueFormula string
+	convoyQueueHookRaw bool
 )
 
 var convoyQueueCmd = &cobra.Command{
@@ -39,6 +41,8 @@ Examples:
 func init() {
 	convoyQueueCmd.Flags().BoolVar(&convoyQueueDryRun, "dry-run", false, "Show what would be queued without acting")
 	convoyQueueCmd.Flags().BoolVar(&convoyQueueForce, "force", false, "Force enqueue even if bead is hooked/in_progress")
+	convoyQueueCmd.Flags().StringVar(&convoyQueueFormula, "formula", "", "Formula to apply (default: mol-polecat-work)")
+	convoyQueueCmd.Flags().BoolVar(&convoyQueueHookRaw, "hook-raw-bead", false, "Hook raw bead without formula")
 
 	convoyCmd.AddCommand(convoyQueueCmd)
 }
@@ -127,9 +131,16 @@ func runConvoyQueue(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	formula := resolveFormula(convoyQueueFormula, convoyQueueHookRaw)
+
 	if convoyQueueDryRun {
 		fmt.Printf("%s Would queue %d issue(s) from convoy %s:\n",
 			style.Bold.Render("📋"), len(candidates), convoyID)
+		if formula != "" {
+			fmt.Printf("  Formula: %s\n", formula)
+		} else {
+			fmt.Printf("  Hook raw beads (no formula)\n")
+		}
 		for _, c := range candidates {
 			fmt.Printf("  Would queue: %s → %s (%s)\n", c.ID, c.RigName, c.Title)
 		}
@@ -146,9 +157,10 @@ func runConvoyQueue(cmd *cobra.Command, args []string) error {
 	successCount := 0
 	for _, c := range candidates {
 		err := enqueueBead(c.ID, c.RigName, EnqueueOptions{
-			Formula:  "mol-polecat-work",
-			NoConvoy: true, // Already tracked by this convoy
-			Force:    convoyQueueForce,
+			Formula:     formula,
+			NoConvoy:    true, // Already tracked by this convoy
+			Force:       convoyQueueForce,
+			HookRawBead: convoyQueueHookRaw,
 		})
 		if err != nil {
 			fmt.Printf("  %s %s: %v\n", style.Dim.Render("✗"), c.ID, err)
