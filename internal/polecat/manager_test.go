@@ -110,6 +110,8 @@ func TestStateIsActive(t *testing.T) {
 		{StateWorking, true},
 		{StateDone, false},
 		{StateStuck, false},
+		// Legacy active state is treated as active
+		{StateActive, true},
 	}
 
 	for _, tt := range tests {
@@ -124,6 +126,7 @@ func TestStateIsWorking(t *testing.T) {
 		state   State
 		working bool
 	}{
+		{StateActive, false},
 		{StateWorking, true},
 		{StateDone, false},
 		{StateStuck, false},
@@ -332,7 +335,7 @@ func TestSetStateWithoutBeads(t *testing.T) {
 	m := NewManager(r, git.NewGit(root), nil)
 
 	// SetState should succeed (no-op when no issue assigned)
-	err := m.SetState("Test", StateWorking)
+	err := m.SetState("Test", StateActive)
 	if err != nil {
 		t.Errorf("SetState: %v (expected no error when no beads/issue)", err)
 	}

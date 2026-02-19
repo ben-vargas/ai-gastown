@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -609,49 +608,6 @@ func runRigAdd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// GetRigLED returns the LED indicator for a rig based on session and operational state.
-// Used by both rig list and statusline for consistent indicators:
-//   - 🟢 = both witness and refinery running (fully active)
-//   - 🟡 = one session running (partially active)
-//   - ⚫ = nothing running (stopped)
-//   - 🅿️ = parked (intentionally paused)
-//   - 🛑 = docked (global shutdown)
-func GetRigLED(hasWitness, hasRefinery bool, opState string) string {
-	if hasWitness && hasRefinery {
-		return "🟢"
-	}
-	if hasWitness || hasRefinery {
-		return "🟡"
-	}
-	switch opState {
-	case "PARKED":
-		return "🅿️"
-	case "DOCKED":
-		return "🛑"
-	default:
-		return "⚫"
-	}
-}
-
-// rigStatePriority returns a sort priority for a rig's state.
-// Lower values sort first: active > partial > stopped > parked > docked.
-func rigStatePriority(hasWitness, hasRefinery bool, opState string) int {
-	if hasWitness && hasRefinery {
-		return 0
-	}
-	if hasWitness || hasRefinery {
-		return 1
-	}
-	switch opState {
-	case "PARKED":
-		return 3
-	case "DOCKED":
-		return 4
-	default:
-		return 2
-	}
-}
-
 func runRigList(cmd *cobra.Command, args []string) error {
 	// Find workspace
 	townRoot, err := workspace.FindFromCwdOrError()
@@ -685,8 +641,6 @@ func runRigList(cmd *cobra.Command, args []string) error {
 		Refinery string `json:"refinery"`
 		Polecats int    `json:"polecats"`
 		Crew     int    `json:"crew"`
-		// sorting fields (not exported to JSON)
-		sortPrio int
 	}
 
 	var rigs []rigInfo
@@ -694,7 +648,11 @@ func runRigList(cmd *cobra.Command, args []string) error {
 	for name := range rigsConfig.Rigs {
 		r, err := mgr.GetRig(name)
 		if err != nil {
-			rigs = append(rigs, rigInfo{Name: name, Status: "error", sortPrio: 99})
+			if rigListJSON {
+				rigs = append(rigs, rigInfo{Name: name, Status: "error"})
+			} else {
+				fmt.Printf("  %s %s\n", style.Warning.Render("!"), name)
+			}
 			continue
 		}
 
@@ -722,17 +680,8 @@ func runRigList(cmd *cobra.Command, args []string) error {
 			Refinery: refineryStatus,
 			Polecats: summary.PolecatCount,
 			Crew:     summary.CrewCount,
-			sortPrio: rigStatePriority(witnessRunning, refineryRunning, opState),
 		})
 	}
-
-	// Sort by state priority (active first), then alphabetically
-	sort.Slice(rigs, func(i, j int) bool {
-		if rigs[i].sortPrio != rigs[j].sortPrio {
-			return rigs[i].sortPrio < rigs[j].sortPrio
-		}
-		return rigs[i].Name < rigs[j].Name
-	})
 
 	if rigListJSON {
 		enc := json.NewEncoder(os.Stdout)
@@ -747,14 +696,14 @@ func runRigList(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		led := GetRigLED(ri.Witness == "running", ri.Refinery == "running", strings.ToUpper(ri.Status))
-		// 🅿️ needs extra space for alignment
-		space := " "
-		if led == "🅿️" {
-			space = "  "
+		stateLabel := style.Success.Render(strings.ToUpper(ri.Status))
+		if ri.Status == "parked" {
+			stateLabel = style.Warning.Render("PARKED")
+		} else if ri.Status == "docked" {
+			stateLabel = style.Dim.Render("DOCKED")
 		}
 
-		fmt.Printf("%s%s%s\n", led, space, style.Bold.Render(ri.Name))
+		fmt.Printf("  %s  %s\n", style.Bold.Render(ri.Name), stateLabel)
 
 		witnessIcon := style.Dim.Render("○")
 		if ri.Witness == "running" {
@@ -765,9 +714,9 @@ func runRigList(cmd *cobra.Command, args []string) error {
 			refineryIcon = style.Success.Render("●")
 		}
 
-		fmt.Printf("   Witness: %s %s  Refinery: %s %s\n",
+		fmt.Printf("    Witness: %s %s  Refinery: %s %s\n",
 			witnessIcon, ri.Witness, refineryIcon, ri.Refinery)
-		fmt.Printf("   Polecats: %d  Crew: %d\n", ri.Polecats, ri.Crew)
+		fmt.Printf("    Polecats: %d  Crew: %d\n", ri.Polecats, ri.Crew)
 		fmt.Println()
 	}
 

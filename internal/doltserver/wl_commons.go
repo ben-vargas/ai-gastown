@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS wanted (
     status VARCHAR(32) DEFAULT 'open',
     effort_level VARCHAR(16) DEFAULT 'medium',
     evidence_url TEXT,
-    sandbox_required TINYINT(1) DEFAULT 0,
+    sandbox_required BOOLEAN DEFAULT FALSE,
     sandbox_scope JSON,
     sandbox_min_tier VARCHAR(32),
     created_at TIMESTAMP,
@@ -145,8 +145,7 @@ CREATE TABLE IF NOT EXISTS stamps (
     prev_stamp_hash VARCHAR(64),
     block_hash VARCHAR(64),
     hop_uri VARCHAR(512),
-    created_at TIMESTAMP,
-    CHECK (NOT(author = subject))
+    created_at TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS badges (

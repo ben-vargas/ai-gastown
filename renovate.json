@@ -5,18 +5,12 @@
     "helpers:pinGitHubActionDigests",
     ":pinDevDependencies"
   ],
-  "labels": [
-    "dependencies"
-  ],
-  "schedule": [
-    "before 9am on Monday"
-  ],
+  "labels": ["dependencies"],
+  "schedule": ["before 9am on Monday"],
   "timezone": "America/Los_Angeles",
   "gomod": {
     "enabled": true,
-    "postUpdateOptions": [
-      "gomodTidy"
-    ]
+    "postUpdateOptions": ["gomodTidy"]
   },
   "dockerfile": {
     "enabled": true
@@ -26,48 +20,33 @@
   },
   "npm": {
     "enabled": true,
-    "managerFilePatterns": [
-      "/npm-package/package.json/"
-    ]
+    "fileMatch": ["npm-package/package.json"]
   },
   "packageRules": [
     {
       "description": "Automerge patch and minor updates for stable deps",
-      "matchUpdateTypes": [
-        "minor",
-        "patch",
-        "pin",
-        "digest"
-      ],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "matchCurrentVersion": "!/^0/",
       "automerge": true
     },
     {
       "description": "Group Go x/ stdlib packages",
-      "groupName": "Go x/ packages",
-      "matchPackageNames": [
-        "golang.org/x/{/,}**"
-      ]
+      "matchPackagePrefixes": ["golang.org/x/"],
+      "groupName": "Go x/ packages"
     },
     {
       "description": "Group Charm ecosystem packages",
-      "groupName": "Charm TUI packages",
-      "matchPackageNames": [
-        "github.com/charmbracelet/{/,}**"
-      ]
+      "matchPackagePrefixes": ["github.com/charmbracelet/"],
+      "groupName": "Charm TUI packages"
     },
     {
       "description": "Group GitHub Actions updates",
-      "matchManagers": [
-        "github-actions"
-      ],
+      "matchManagers": ["github-actions"],
       "groupName": "GitHub Actions"
     },
     {
       "description": "Do not automerge major updates",
-      "matchUpdateTypes": [
-        "major"
-      ],
+      "matchUpdateTypes": ["major"],
       "automerge": false
     }
   ]
