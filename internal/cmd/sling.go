@@ -255,14 +255,25 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 	if len(args) > 2 {
 		lastArg := args[len(args)-1]
 		if rigName, isRig := IsRigName(lastArg); isRig {
-			// Explicit rig: print deprecation warning
-			fmt.Printf("  %s gt sling now auto-resolves the rig from bead prefixes. "+
-				"You no longer need to explicitly specify <%s>.\n",
-				style.Warning.Render("Deprecation:"), rigName)
+			// Explicit rig: print tip about auto-resolve
+			fmt.Printf("  %s the rig can be auto-resolved from bead prefixes. "+
+				"You can omit <%s>.\n",
+				style.Dim.Render("Tip:"), rigName)
 			return runBatchSling(args[:len(args)-1], rigName, townBeadsDir)
 		}
 		// No explicit rig -- try auto-resolving from bead prefixes
 		if allBeadIDs(args) {
+			rigName, err := resolveRigFromBeadIDs(args, filepath.Dir(townBeadsDir))
+			if err != nil {
+				return err
+			}
+			return runBatchSling(args, rigName, townBeadsDir)
+		}
+	}
+
+	// 2-bead auto-resolve: gt sling gt-abc gt-def
+	if len(args) == 2 && allBeadIDs(args) {
+		if _, isRig := IsRigName(args[1]); !isRig {
 			rigName, err := resolveRigFromBeadIDs(args, filepath.Dir(townBeadsDir))
 			if err != nil {
 				return err
