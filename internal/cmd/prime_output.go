@@ -25,7 +25,8 @@ func outputPrimeContext(ctx RoleContext) (string, error) {
 	tmpl, err := templates.New()
 	if err != nil {
 		// Fall back to hardcoded output if templates fail
-		return "", outputPrimeContextFallback(ctx)
+		outputPrimeContextFallback(ctx)
+		return "", nil
 	}
 
 	// Map role to template name
@@ -47,7 +48,8 @@ func outputPrimeContext(ctx RoleContext) (string, error) {
 		roleName = "boot"
 	default:
 		// Unknown role - use fallback
-		return "", outputPrimeContextFallback(ctx)
+		outputPrimeContextFallback(ctx)
+		return "", nil
 	}
 
 	// Build template data
@@ -85,7 +87,7 @@ func outputPrimeContext(ctx RoleContext) (string, error) {
 	return output, nil
 }
 
-func outputPrimeContextFallback(ctx RoleContext) error {
+func outputPrimeContextFallback(ctx RoleContext) {
 	switch ctx.Role {
 	case RoleMayor:
 		outputMayorContext(ctx)
@@ -102,7 +104,6 @@ func outputPrimeContextFallback(ctx RoleContext) error {
 	default:
 		outputUnknownContext(ctx)
 	}
-	return nil
 }
 
 func outputMayorContext(ctx RoleContext) {
