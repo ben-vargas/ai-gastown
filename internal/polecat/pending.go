@@ -2,7 +2,6 @@
 package polecat
 
 import (
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -38,19 +37,17 @@ type PendingSpawn struct {
 	mailbox *mail.Mailbox `json:"-"`
 }
 
-// getDeaconMailbox resolves the Deacon's mailbox from a town root.
-func getDeaconMailbox(townRoot string) (*mail.Mailbox, error) {
+// CheckInboxForSpawns discovers pending spawns from POLECAT_STARTED messages
+// in the Deacon's inbox. Uses mail as source of truth (ZFC principle).
+func CheckInboxForSpawns(townRoot string) ([]*PendingSpawn, error) {
+	// Get Deacon's mailbox
 	router := mail.NewRouter(townRoot)
 	mailbox, err := router.GetMailbox("deacon/")
 	if err != nil {
 		return nil, fmt.Errorf("getting deacon mailbox: %w", err)
 	}
-	return mailbox, nil
-}
 
-// checkMailboxForSpawns discovers pending spawns from POLECAT_STARTED messages
-// in the given mailbox. Extracted from CheckInboxForSpawns for testability.
-func checkMailboxForSpawns(mailbox *mail.Mailbox) ([]*PendingSpawn, error) {
+	// Get all messages (both read and unread - we track by archival status)
 	messages, err := mailbox.List()
 	if err != nil {
 		return nil, fmt.Errorf("listing messages: %w", err)
@@ -58,6 +55,7 @@ func checkMailboxForSpawns(mailbox *mail.Mailbox) ([]*PendingSpawn, error) {
 
 	var pending []*PendingSpawn
 
+	// Look for POLECAT_STARTED messages
 	for _, msg := range messages {
 		if !strings.HasPrefix(msg.Subject, "POLECAT_STARTED ") {
 			continue
@@ -96,16 +94,6 @@ func checkMailboxForSpawns(mailbox *mail.Mailbox) ([]*PendingSpawn, error) {
 	}
 
 	return pending, nil
-}
-
-// CheckInboxForSpawns discovers pending spawns from POLECAT_STARTED messages
-// in the Deacon's inbox. Uses mail as source of truth (ZFC principle).
-func CheckInboxForSpawns(townRoot string) ([]*PendingSpawn, error) {
-	mailbox, err := getDeaconMailbox(townRoot)
-	if err != nil {
-		return nil, err
-	}
-	return checkMailboxForSpawns(mailbox)
 }
 
 // TriggerResult holds the result of attempting to trigger a pending spawn.
@@ -182,64 +170,6 @@ func TriggerPendingSpawns(townRoot string, timeout time.Duration) ([]TriggerResu
 	return results, nil
 }
 
-// clearPendingSpawnFromList archives all POLECAT_STARTED messages for a specific
-// session from the given pending list. Extracted for testability.
-// Race-safe: treats ErrMessageNotFound as success (concurrent archive by daemon).
-func clearPendingSpawnFromList(pending []*PendingSpawn, sessionName string) error {
-	for _, ps := range pending {
-		if ps.Session == sessionName {
-			if ps.mailbox == nil {
-				return fmt.Errorf("nil mailbox for pending spawn session %s (mail_id: %s)", sessionName, ps.MailID)
-			}
-			if err := ps.mailbox.Archive(ps.MailID); err != nil {
-				if errors.Is(err, mail.ErrMessageNotFound) {
-					continue // Already archived by concurrent path
-				}
-				return fmt.Errorf("archiving mail %s for session %s: %w", ps.MailID, sessionName, err)
-			}
-		}
-	}
-	return nil
-}
-
-// ClearPendingSpawn archives all POLECAT_STARTED messages for a specific session,
-// removing it from the pending list. Used by the Deacon after observing that a
-// session has been triggered via AI-based observation.
-// Idempotent: returns nil if no matching pending spawn is found (race-safe).
-func ClearPendingSpawn(townRoot, sessionName string) error {
-	pending, err := CheckInboxForSpawns(townRoot)
-	if err != nil {
-		return fmt.Errorf("checking inbox: %w", err)
-	}
-	return clearPendingSpawnFromList(pending, sessionName)
-}
-
-// pruneStalePendingFromList archives POLECAT_STARTED messages older than the
-// given age from the provided pending list. Extracted for testability.
-// Best-effort: continues on per-item archive failures to maximize pruning throughput.
-func pruneStalePendingFromList(pending []*PendingSpawn, maxAge time.Duration) (int, error) {
-	cutoff := time.Now().Add(-maxAge)
-	pruned := 0
-
-	for _, ps := range pending {
-		if ps.SpawnedAt.Before(cutoff) {
-			if ps.mailbox == nil {
-				continue // Skip items with nil mailbox
-			}
-			if err := ps.mailbox.Archive(ps.MailID); err != nil {
-				if errors.Is(err, mail.ErrMessageNotFound) {
-					pruned++ // Already archived by concurrent path
-					continue
-				}
-				continue // Best-effort: skip other failures, retry next patrol
-			}
-			pruned++
-		}
-	}
-
-	return pruned, nil
-}
-
 // PruneStalePending archives POLECAT_STARTED messages older than the given age.
 // Old spawns likely had their sessions die without triggering.
 func PruneStalePending(townRoot string, maxAge time.Duration) (int, error) {
@@ -247,5 +177,21 @@ func PruneStalePending(townRoot string, maxAge time.Duration) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return pruneStalePendingFromList(pending, maxAge)
+
+	cutoff := time.Now().Add(-maxAge)
+	pruned := 0
+
+	for _, ps := range pending {
+		if ps.SpawnedAt.Before(cutoff) {
+			// Archive stale spawn message
+			if ps.mailbox != nil {
+				if err := ps.mailbox.Archive(ps.MailID); err != nil {
+					continue // Don't count as pruned if archive failed
+				}
+			}
+			pruned++
+		}
+	}
+
+	return pruned, nil
 }

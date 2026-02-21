@@ -139,29 +139,6 @@ This command is typically called by the daemon during cold startup.`,
 	RunE: runDeaconTriggerPending,
 }
 
-var deaconPendingCmd = &cobra.Command{
-	Use:   "pending [session]",
-	Short: "View pending spawns with captured output",
-	Long: `View pending polecat spawns with captured terminal output for AI observation.
-
-Without arguments, lists all pending spawns and captures the last 30 lines of
-terminal output from each session. The Deacon AI can analyze this output to
-determine if Claude is ready (e.g., prompt visible).
-
-With a session argument, clears that session from the pending list by archiving
-its POLECAT_STARTED message.
-
-This is the AI-based (ZFC-compliant) alternative to 'gt deacon trigger-pending',
-which uses regex detection. In steady-state, the Deacon should use this command
-for observation and 'gt nudge' for triggering.
-
-Examples:
-  gt deacon pending                    # List pending spawns with output
-  gt deacon pending gt-gastown-max     # Clear session from pending list`,
-	Args: cobra.MaximumNArgs(1),
-	RunE: runDeaconPending,
-}
-
 var deaconHealthCheckCmd = &cobra.Command{
 	Use:   "health-check <agent>",
 	Short: "Send a health check ping to an agent and track response",
@@ -449,7 +426,6 @@ func init() {
 	deaconCmd.AddCommand(deaconStaleHooksCmd)
 	deaconCmd.AddCommand(deaconPauseCmd)
 	deaconCmd.AddCommand(deaconResumeCmd)
-	deaconCmd.AddCommand(deaconPendingCmd)
 	deaconCmd.AddCommand(deaconCleanupOrphansCmd)
 	deaconCmd.AddCommand(deaconZombieScanCmd)
 	deaconCmd.AddCommand(deaconRedispatchCmd)
@@ -928,84 +904,6 @@ func runDeaconTriggerPending(cmd *cobra.Command, args []string) error {
 	if remaining > 0 {
 		fmt.Printf("%s %d spawn(s) still waiting for Claude\n",
 			style.Dim.Render("○"), remaining)
-	}
-
-	return nil
-}
-
-// runDeaconPending handles the 'gt deacon pending' command.
-// Without args: lists pending spawns with captured terminal output.
-// With session arg: clears that session from the pending list.
-func runDeaconPending(cmd *cobra.Command, args []string) error {
-	townRoot, err := workspace.FindFromCwdOrError()
-	if err != nil {
-		return fmt.Errorf("not in a Gas Town workspace: %w", err)
-	}
-
-	// With session argument: clear from pending list
-	if len(args) == 1 {
-		sessionName := args[0]
-		if err := polecat.ClearPendingSpawn(townRoot, sessionName); err != nil {
-			return fmt.Errorf("clearing pending spawn: %w", err)
-		}
-		fmt.Printf("%s Cleared pending spawn for session %s\n",
-			style.Bold.Render("✓"), sessionName)
-		return nil
-	}
-
-	// No args: list pending spawns with captured output
-	// First, prune stale pending spawns older than 5 minutes
-	pruned, err := polecat.PruneStalePending(townRoot, 5*time.Minute)
-	if err != nil {
-		// Non-fatal: log and continue
-		fmt.Printf("%s Warning: prune stale pending: %v\n", style.Dim.Render("⚠"), err)
-	} else if pruned > 0 {
-		fmt.Printf("%s Pruned %d stale pending spawn(s)\n", style.Dim.Render("♻"), pruned)
-	}
-
-	pending, err := polecat.CheckInboxForSpawns(townRoot)
-	if err != nil {
-		return fmt.Errorf("checking inbox: %w", err)
-	}
-
-	if len(pending) == 0 {
-		fmt.Printf("%s No pending spawns\n", style.Dim.Render("○"))
-		return nil
-	}
-
-	t := tmux.NewTmux()
-
-	fmt.Printf("%s %d pending spawn(s)\n\n", style.Bold.Render("●"), len(pending))
-
-	for _, ps := range pending {
-		age := time.Since(ps.SpawnedAt).Round(time.Second)
-		fmt.Printf("%s %s/%s (session: %s, issue: %s, age: %s)\n",
-			style.Bold.Render("→"), ps.Rig, ps.Polecat, ps.Session, ps.Issue, age)
-
-		// Check if session exists
-		running, err := t.HasSession(ps.Session)
-		if err != nil {
-			fmt.Printf("  %s Error checking session: %v\n\n", style.Dim.Render("⚠"), err)
-			continue
-		}
-		if !running {
-			fmt.Printf("  %s Session not running (stale spawn)\n\n", style.Dim.Render("✗"))
-			continue
-		}
-
-		// Capture terminal output for AI observation
-		output, err := t.CapturePane(ps.Session, 30)
-		if err != nil {
-			fmt.Printf("  %s Error capturing output: %v\n\n", style.Dim.Render("⚠"), err)
-			continue
-		}
-
-		// Display captured output
-		fmt.Printf("  %s\n", style.Dim.Render("--- captured output (last 30 lines) ---"))
-		for _, line := range strings.Split(strings.TrimRight(output, "\n"), "\n") {
-			fmt.Printf("  %s\n", line)
-		}
-		fmt.Printf("  %s\n\n", style.Dim.Render("--- end ---"))
 	}
 
 	return nil
