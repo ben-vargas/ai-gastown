@@ -1118,6 +1118,11 @@ func detectZombieDeadSession(workDir, rigName, polecatName, agentBeadID, session
 			return ZombieResult{}, false // Recent — still working through gt done
 		}
 		_, diHookBead := getAgentBeadState(workDir, agentBeadID)
+
+		// If bead is already closed, the polecat completed successfully.
+		// Just nuke the dead session; don't trigger re-dispatch. (gt-sy8)
+		beadAlreadyClosed := diHookBead != "" && getBeadStatus(workDir, diHookBead) == "closed"
+
 		zombie := ZombieResult{
 			PolecatName: polecatName,
 			AgentState:  "done-intent-dead",
@@ -1128,13 +1133,23 @@ func detectZombieDeadSession(workDir, rigName, polecatName, agentBeadID, session
 			zombie.Error = err
 			zombie.Action = fmt.Sprintf("nuke-failed (done-intent): %v", err)
 		}
-		zombie.BeadRecovered = resetAbandonedBead(workDir, rigName, diHookBead, polecatName, router)
+		// Only attempt bead recovery if the bead isn't already closed. (gt-sy8)
+		if !beadAlreadyClosed {
+			zombie.BeadRecovered = resetAbandonedBead(workDir, rigName, diHookBead, polecatName, router)
+		}
 		return zombie, true
 	}
 
 	// Standard zombie detection: active state or hooked bead with dead session.
 	agentState, hookBead := getAgentBeadState(workDir, agentBeadID)
 	if !isZombieState(agentState, hookBead) {
+		return ZombieResult{}, false
+	}
+
+	// A polecat whose hook bead is already CLOSED completed its work
+	// successfully. The dead session is expected (gt done kills it).
+	// Don't flag as zombie or trigger re-dispatch. (gt-sy8)
+	if hookBead != "" && getBeadStatus(workDir, hookBead) == "closed" {
 		return ZombieResult{}, false
 	}
 
