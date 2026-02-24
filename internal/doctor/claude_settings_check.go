@@ -686,9 +686,15 @@ func (c *ClaudeSettingsCheck) Fix(ctx *CheckContext) error {
 		fmt.Printf("  Deleted stale: %s\n", sf.path)
 		needsRestart = true
 
-		// Also delete parent .claude directory if empty
 		claudeDir := filepath.Dir(sf.path)
-		_ = os.Remove(claudeDir) // Best-effort, will fail if not empty
+
+		// Only remove the parent .claude directory for wrong-location files.
+		// For correct-location stale files, the directory is the RIGHT place —
+		// removing it creates a race window where the daemon could recreate
+		// settings before the fix does (gt-99u).
+		if sf.wrongLocation {
+			_ = os.Remove(claudeDir) // Best-effort, will fail if not empty
+		}
 
 		// Handle town-root files: redirect to mayor/ instead of recreating at root.
 		// Town-root settings pollute ALL agents via directory traversal.
