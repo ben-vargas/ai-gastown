@@ -388,7 +388,8 @@ func ensureAgentReady(sessionName string) error {
 		}
 	}
 
-	// Accept bypass permissions warning if the agent emits one on startup
+	// Accept startup dialogs (workspace trust + bypass permissions) if they appear
+	_ = t.AcceptWorkspaceTrustDialog(sessionName)
 	agentName, _ := t.GetEnvironment(sessionName, "GT_AGENT")
 	if shouldAcceptPermissionWarning(agentName) {
 		_ = t.AcceptBypassPermissionsWarning(sessionName)

@@ -1102,6 +1102,55 @@ func (t *Tmux) NudgePane(pane, message string) error {
 	return fmt.Errorf("failed to send Enter after 3 attempts: %w", lastErr)
 }
 
+// AcceptStartupDialogs dismisses all Claude Code startup dialogs that can block
+// automated sessions. Currently handles (in order):
+//   1. Workspace trust dialog ("Quick safety check" / "trust this folder") — v2.1.55+
+//   2. Bypass permissions warning ("Bypass Permissions mode") — requires Down+Enter
+//
+// Call this after starting Claude and waiting for it to initialize (WaitForCommand),
+// but before sending any prompts. Idempotent: safe to call on sessions without dialogs.
+func (t *Tmux) AcceptStartupDialogs(session string) error {
+	if err := t.AcceptWorkspaceTrustDialog(session); err != nil {
+		return fmt.Errorf("workspace trust dialog: %w", err)
+	}
+	if err := t.AcceptBypassPermissionsWarning(session); err != nil {
+		return fmt.Errorf("bypass permissions warning: %w", err)
+	}
+	return nil
+}
+
+// AcceptWorkspaceTrustDialog dismisses the Claude Code workspace trust dialog.
+// Starting with Claude Code v2.1.55, a "Quick safety check" dialog appears on first launch
+// in a workspace, asking the user to confirm they trust the folder. Option 1 ("Yes, I trust
+// this folder") is pre-selected, so we just need to press Enter to accept.
+// This dialog appears BEFORE the bypass permissions warning, so call this first.
+func (t *Tmux) AcceptWorkspaceTrustDialog(session string) error {
+	// Wait for the dialog to potentially render
+	time.Sleep(1 * time.Second)
+
+	// Check if the workspace trust dialog is present
+	content, err := t.CapturePane(session, 30)
+	if err != nil {
+		return err
+	}
+
+	// Look for characteristic trust dialog text
+	if !strings.Contains(content, "trust this folder") && !strings.Contains(content, "Quick safety check") {
+		// Trust dialog not present, nothing to do
+		return nil
+	}
+
+	// Option 1 ("Yes, I trust this folder") is already pre-selected, just press Enter
+	if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
+		return err
+	}
+
+	// Wait for dialog to dismiss before proceeding to bypass permissions
+	time.Sleep(500 * time.Millisecond)
+
+	return nil
+}
+
 // AcceptBypassPermissionsWarning dismisses the Claude Code bypass permissions warning dialog.
 // When Claude starts with --dangerously-skip-permissions, it shows a warning dialog that
 // requires pressing Down arrow to select "Yes, I accept" and then Enter to confirm.

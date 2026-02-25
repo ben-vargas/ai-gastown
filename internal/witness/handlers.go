@@ -1304,6 +1304,23 @@ func DetectStalledPolecats(workDir, rigName string) *DetectStalledPolecatsResult
 			continue
 		}
 
+		// Check for workspace trust dialog (appears before bypass-permissions)
+		if strings.Contains(content, "trust this folder") || strings.Contains(content, "Quick safety check") {
+			stalled := StalledResult{
+				PolecatName: polecatName,
+				StallType:   "workspace-trust",
+			}
+			if err := t.AcceptWorkspaceTrustDialog(sessionName); err != nil {
+				stalled.Action = "escalated"
+				stalled.Error = fmt.Errorf("auto-dismiss failed: %w", err)
+			} else {
+				stalled.Action = "auto-dismissed"
+			}
+			result.Stalled = append(result.Stalled, stalled)
+			// Re-capture after dismissing trust dialog, bypass-permissions may follow
+			content, _ = t.CapturePane(sessionName, 30)
+		}
+
 		// Check for bypass-permissions prompt
 		if strings.Contains(content, "Bypass Permissions mode") {
 			stalled := StalledResult{

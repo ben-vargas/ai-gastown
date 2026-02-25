@@ -835,7 +835,7 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 				// Non-fatal — agent might still start
 				style.PrintWarning("timeout waiting for agent to start: %v", err)
 			}
-			_ = t.AcceptBypassPermissionsWarning(sessionID)
+			_ = t.AcceptStartupDialogs(sessionID)
 		}
 	}
 

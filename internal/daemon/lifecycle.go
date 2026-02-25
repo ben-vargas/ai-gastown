@@ -388,7 +388,7 @@ func (d *Daemon) restartSession(sessionName, identity string) error {
 	if err := d.tmux.WaitForCommand(sessionName, constants.SupportedShells, constants.ClaudeStartTimeout); err != nil {
 		// Non-fatal - Claude might still start
 	}
-	_ = d.tmux.AcceptBypassPermissionsWarning(sessionName)
+	_ = d.tmux.AcceptStartupDialogs(sessionName)
 	time.Sleep(constants.ShutdownNotifyDelay)
 
 	return nil

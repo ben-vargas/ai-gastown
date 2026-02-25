@@ -1674,7 +1674,7 @@ func (d *Daemon) restartPolecatSession(rigName, polecatName, sessionName string)
 	if err := d.tmux.WaitForCommand(sessionName, constants.SupportedShells, constants.ClaudeStartTimeout); err != nil {
 		// Non-fatal - Claude might still start
 	}
-	_ = d.tmux.AcceptBypassPermissionsWarning(sessionName)
+	_ = d.tmux.AcceptStartupDialogs(sessionName)
 
 	return nil
 }

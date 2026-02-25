@@ -384,8 +384,8 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 	// Wait for Claude to start (non-fatal)
 	debugSession("WaitForCommand", m.tmux.WaitForCommand(sessionID, constants.SupportedShells, constants.ClaudeStartTimeout))
 
-	// Accept bypass permissions warning dialog if it appears
-	debugSession("AcceptBypassPermissionsWarning", m.tmux.AcceptBypassPermissionsWarning(sessionID))
+	// Accept startup dialogs (workspace trust + bypass permissions) if they appear
+	debugSession("AcceptStartupDialogs", m.tmux.AcceptStartupDialogs(sessionID))
 
 	// Wait for runtime to be fully ready at the prompt (not just started).
 	// Uses prompt-based polling for agents with ReadyPromptPrefix (e.g., Claude "❯ "),
