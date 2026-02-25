@@ -335,9 +335,9 @@ func configureRefspec(repoPath string, singleBranch bool) error {
 			}
 			return nil
 		}
-		headRef := strings.TrimSpace(headOut.String())       // e.g. "refs/heads/main"
-		branch := strings.TrimPrefix(headRef, "refs/heads/") // e.g. "main"
-		refspec := branch + ":refs/remotes/origin/" + branch // e.g. "main:refs/remotes/origin/main"
+		headRef := strings.TrimSpace(headOut.String())        // e.g. "refs/heads/main"
+		branch := strings.TrimPrefix(headRef, "refs/heads/")  // e.g. "main"
+		refspec := branch + ":refs/remotes/origin/" + branch   // e.g. "main:refs/remotes/origin/main"
 
 		fetchCmd := exec.Command("git", "--git-dir", gitDir, "fetch", "--depth", "1", "origin", refspec)
 		fetchCmd.Stderr = &stderr
@@ -484,10 +484,10 @@ func (g *Git) CommitAll(message string) error {
 
 // GitStatus represents the status of the working directory.
 type GitStatus struct {
-	Clean     bool
-	Modified  []string
-	Added     []string
-	Deleted   []string
+	Clean    bool
+	Modified []string
+	Added    []string
+	Deleted  []string
 	Untracked []string
 }
 
@@ -603,8 +603,11 @@ func (g *Git) SetRemoteURL(name, url string) (string, error) {
 // If the remote exists with a different URL, it's updated.
 func (g *Git) AddUpstreamRemote(upstreamURL string) error {
 	// Check if upstream remote already exists
-	_, err := g.run("remote", "get-url", "upstream")
-	if err == nil {
+	has, err := g.HasUpstreamRemote()
+	if err != nil {
+		return err
+	}
+	if has {
 		// Remote exists, update it
 		_, err = g.run("remote", "set-url", "upstream", upstreamURL)
 		return err
@@ -619,15 +622,24 @@ func (g *Git) AddUpstreamRemote(upstreamURL string) error {
 func (g *Git) GetUpstreamURL() (string, error) {
 	out, err := g.run("remote", "get-url", "upstream")
 	if err != nil {
-		return "", nil // upstream remote doesn't exist
+		if strings.Contains(err.Error(), "No such remote") || strings.Contains(err.Error(), "exit status") {
+			return "", nil // upstream remote doesn't exist
+		}
+		return "", err
 	}
 	return strings.TrimSpace(out), nil
 }
 
 // HasUpstreamRemote returns true if an upstream remote is configured.
-func (g *Git) HasUpstreamRemote() bool {
+func (g *Git) HasUpstreamRemote() (bool, error) {
 	_, err := g.run("remote", "get-url", "upstream")
-	return err == nil
+	if err != nil {
+		if strings.Contains(err.Error(), "No such remote") || strings.Contains(err.Error(), "exit status") {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // FetchUpstream fetches from the upstream remote.
@@ -1274,8 +1286,8 @@ type UncommittedWorkStatus struct {
 	StashCount            int
 	UnpushedCommits       int
 	// Details for error messages
-	ModifiedFiles  []string
-	UntrackedFiles []string
+	ModifiedFiles   []string
+	UntrackedFiles  []string
 }
 
 // Clean returns true if there is no uncommitted work.
