@@ -1246,9 +1246,16 @@ func hookBeadForHandoff(beadID string) error {
 }
 
 // collectHandoffState gathers current state for handoff context.
-// Collects: inbox summary, ready beads, hooked work.
+// Collects: git workspace state (deterministic), inbox summary, ready beads, hooked work.
+// Git state is always collected first via Go library calls (no shelling out) to ensure
+// the handoff always contains useful context even when external commands fail. (GH#1996)
 func collectHandoffState() string {
 	var parts []string
+
+	// Deterministic git state — always collected via Go library, never empty. (GH#1996)
+	if gitState := collectGitState(); gitState != "" {
+		parts = append(parts, gitState)
+	}
 
 	// Get hooked work
 	hookOutput, err := exec.Command("gt", "hook").Output()
@@ -1305,4 +1312,71 @@ func collectHandoffState() string {
 	}
 
 	return strings.Join(parts, "\n\n")
+}
+
+// collectGitState captures deterministic workspace state using the Go git library.
+// This never shells out, so it works reliably even when PATH is broken or
+// external commands (gt, bd) are unavailable. Returns empty string if git
+// state cannot be read (e.g., not in a git repo). (GH#1996)
+func collectGitState() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+
+	g := git.NewGit(cwd)
+	var lines []string
+
+	// Branch
+	if branch, err := g.CurrentBranch(); err == nil && branch != "" {
+		lines = append(lines, "Branch: "+branch)
+	}
+
+	// Uncommitted work summary
+	work, err := g.CheckUncommittedWork()
+	if err != nil {
+		return ""
+	}
+
+	if work.HasUncommittedChanges {
+		if len(work.ModifiedFiles) > 0 {
+			files := work.ModifiedFiles
+			if len(files) > 10 {
+				files = append(files[:10], fmt.Sprintf("... (+%d more)", len(work.ModifiedFiles)-10))
+			}
+			lines = append(lines, "Modified: "+strings.Join(files, ", "))
+		}
+		if len(work.UntrackedFiles) > 0 {
+			files := work.UntrackedFiles
+			if len(files) > 5 {
+				files = append(files[:5], fmt.Sprintf("... (+%d more)", len(work.UntrackedFiles)-5))
+			}
+			lines = append(lines, "Untracked: "+strings.Join(files, ", "))
+		}
+	}
+
+	if work.StashCount > 0 {
+		lines = append(lines, fmt.Sprintf("Stashes: %d", work.StashCount))
+	}
+
+	if work.UnpushedCommits > 0 {
+		lines = append(lines, fmt.Sprintf("Unpushed commits: %d", work.UnpushedCommits))
+	}
+
+	// Recent commits (last 5) for context on what was being worked on.
+	// Uses exec.Command directly since git.Git has no exported Run method.
+	logCmd := exec.Command("git", "log", "--oneline", "-5")
+	logCmd.Dir = cwd
+	if logOut, err := logCmd.Output(); err == nil {
+		logStr := strings.TrimSpace(string(logOut))
+		if logStr != "" {
+			lines = append(lines, "Recent commits:\n"+logStr)
+		}
+	}
+
+	if len(lines) == 0 {
+		return ""
+	}
+
+	return "## Workspace State\n" + strings.Join(lines, "\n")
 }
