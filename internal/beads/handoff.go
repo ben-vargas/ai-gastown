@@ -2,6 +2,7 @@
 package beads
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -144,13 +145,20 @@ func (b *Beads) ClearMail(reason string) (*ClearMailResult, error) {
 		result.Closed = len(toClose)
 	}
 
-	// Clear pinned messages
+	// Clear pinned messages — continue on error so partial progress isn't lost
 	empty := ""
+	var clearErrs []error
 	for _, issue := range toClear {
 		if err := b.Update(issue.ID, UpdateOptions{Description: &empty}); err != nil {
-			return nil, fmt.Errorf("clearing pinned message %s: %w", issue.ID, err)
+			clearErrs = append(clearErrs, fmt.Errorf("clearing pinned message %s: %w", issue.ID, err))
+			continue
 		}
 		result.Cleared++
+	}
+
+	if len(clearErrs) > 0 {
+		return result, fmt.Errorf("partial failure clearing %d/%d pinned messages: %w",
+			len(clearErrs), len(toClear), errors.Join(clearErrs...))
 	}
 
 	return result, nil
