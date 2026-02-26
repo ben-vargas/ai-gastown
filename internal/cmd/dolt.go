@@ -812,6 +812,23 @@ func runDoltCleanup(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// BALK: If there are too many orphans, SQL-based cleanup will take hours
+	// because each DROP DATABASE is a separate query against an overloaded server.
+	// Force the user to stop the server and clean the filesystem directly.
+	// (Clown Show #18: 245 orphans at 27s latency = ~2 hour cleanup)
+	const maxSQLCleanup = 50
+	if len(orphans) > maxSQLCleanup {
+		fmt.Printf("\n%s Too many orphans (%d) for SQL-based cleanup (max %d).\n",
+			style.Bold.Render("!"), len(orphans), maxSQLCleanup)
+		fmt.Printf("  The server is likely overloaded. SQL cleanup would take hours.\n\n")
+		fmt.Printf("  Instead, stop the server and clean the filesystem:\n\n")
+		fmt.Printf("    gt dolt stop\n")
+		fmt.Printf("    cd %s/.dolt-data && rm -rf testdb_* beads_t* beads_pt* beads_vr* doctest_* doctortest_*\n", townRoot)
+		fmt.Printf("    gt dolt start\n\n")
+		fmt.Printf("  This is safe — orphan databases have no production data.\n")
+		return fmt.Errorf("too many orphans (%d) for SQL cleanup — see instructions above", len(orphans))
+	}
+
 	fmt.Println()
 	removed := 0
 	for _, o := range orphans {
