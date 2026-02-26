@@ -1362,6 +1362,30 @@ func runDoltSync(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Park all rigs before stopping the server.
+	// This stops witnesses/refineries so they don't detect the outage
+	// and restart the server while we're pushing.
+	var parkedRigs []string
+	if wasRunning && !doltSyncDry {
+		rigs, discoverErr := discoverAllRigs(townRoot)
+		if discoverErr != nil {
+			fmt.Printf("%s Could not discover rigs (continuing without parking): %v\n",
+				style.Warning.Render("!"), discoverErr)
+		} else {
+			for _, r := range rigs {
+				name := r.Name
+				if IsRigParked(townRoot, name) {
+					continue // already parked, don't touch it
+				}
+				if err := parkOneRig(name); err != nil {
+					fmt.Printf("%s Failed to park %s: %v\n", style.Warning.Render("!"), name, err)
+				} else {
+					parkedRigs = append(parkedRigs, name)
+				}
+			}
+		}
+	}
+
 	if wasRunning {
 		fmt.Printf("Stopping Dolt server (PID %d)...\n", pid)
 		if err := doltserver.Stop(townRoot); err != nil {
@@ -1387,11 +1411,18 @@ func runDoltSync(cmd *cobra.Command, args []string) error {
 			if startErr := doltserver.Start(townRoot); startErr != nil {
 				fmt.Printf("%s Failed to restart Dolt server: %v\n", style.Bold.Render("✗"), startErr)
 				fmt.Printf("  Start manually with: %s\n", style.Dim.Render("gt dolt start"))
-				return
+			} else {
+				// Start() now verifies the server is accepting connections,
+				// so if we get here it's genuinely ready.
+				fmt.Printf("%s Dolt server restarted (accepting connections)\n", style.Bold.Render("✓"))
 			}
-			// Start() now verifies the server is accepting connections,
-			// so if we get here it's genuinely ready.
-			fmt.Printf("%s Dolt server restarted (accepting connections)\n", style.Bold.Render("✓"))
+
+			// Unpark rigs that we parked
+			for _, name := range parkedRigs {
+				if err := unparkOneRig(name); err != nil {
+					fmt.Printf("%s Failed to unpark %s: %v\n", style.Warning.Render("!"), name, err)
+				}
+			}
 		}()
 	}
 
