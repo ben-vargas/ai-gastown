@@ -793,6 +793,22 @@ func TestLoadSettings(t *testing.T) {
 	}
 }
 
+func TestLoadSettingsIntegrityError(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "settings.json")
+	if err := os.WriteFile(path, []byte(`{"hooks":{"SessionStart":"bad"}}`), 0644); err != nil {
+		t.Fatalf("failed to write: %v", err)
+	}
+
+	_, err := LoadSettings(path)
+	if err == nil {
+		t.Fatal("expected integrity error for malformed settings")
+	}
+	if !IsSettingsIntegrityError(err) {
+		t.Fatalf("expected SettingsIntegrityError, got %T: %v", err, err)
+	}
+}
+
 func TestDiscoverTargets(t *testing.T) {
 	tmpDir := t.TempDir()
 
