@@ -312,8 +312,22 @@ func requireSubcommand(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("requires a subcommand\n\nRun '%s --help' for usage", buildCommandPath(cmd))
 	}
-	return fmt.Errorf("unknown command %q for %q\n\nRun '%s --help' for available commands",
-		args[0], buildCommandPath(cmd), buildCommandPath(cmd))
+	unknown := args[0]
+	errMsg := fmt.Sprintf("unknown command %q for %q", unknown, buildCommandPath(cmd))
+	// Use cobra's suggestion engine (Levenshtein + SuggestFor lists)
+	if suggestions := cmd.SuggestionsFor(unknown); len(suggestions) > 0 {
+		errMsg += "\n\nDid you mean"
+		if len(suggestions) == 1 {
+			errMsg += " this?\n"
+		} else {
+			errMsg += " one of these?\n"
+		}
+		for _, s := range suggestions {
+			errMsg += fmt.Sprintf("\t%s %s\n", buildCommandPath(cmd), s)
+		}
+	}
+	errMsg += fmt.Sprintf("\nRun '%s --help' for available commands", buildCommandPath(cmd))
+	return fmt.Errorf("%s", errMsg)
 }
 
 // checkHelpFlag checks if --help or -h is the first argument and shows help if so.
