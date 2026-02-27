@@ -91,6 +91,13 @@ type Daemon struct {
 	// Option B throttling: only pour when anomaly detected AND cooldown elapsed.
 	// Only accessed from heartbeat loop goroutine - no sync needed.
 	lastDoctorMolTime time.Time
+
+	// Doctor dog action cooldowns — prevent repeated actions within a window.
+	// Only accessed from heartbeat loop goroutine - no sync needed.
+	lastDoctorRestart   time.Time
+	lastDoctorJanitor   time.Time
+	lastDoctorBackup    time.Time
+	lastDoctorEscalate  time.Time
 }
 
 // sessionDeath records a detected session death for mass death analysis.

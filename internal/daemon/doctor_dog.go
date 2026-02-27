@@ -17,12 +17,30 @@ import (
 )
 
 // Operational constants — timeouts needed to perform checks.
-// No threshold constants — agents decide what's concerning.
 const (
 	defaultDoctorDogInterval = 5 * time.Minute
 	doctorDogTCPTimeout      = 5 * time.Second
 	doctorDogQueryTimeout    = 10 * time.Second
 	doctorDogGCTimeout       = 5 * time.Minute
+)
+
+// Response thresholds — when to take automated action.
+const (
+	// doctorDogLatencyAlertMs is the latency threshold (in ms) that triggers
+	// an escalation to the Mayor. 5 seconds indicates severe degradation.
+	doctorDogLatencyAlertMs = 5000.0
+
+	// doctorDogOrphanAlertCount is the database count threshold that triggers
+	// a janitor run. More than 10 is concerning; > 20 triggers cleanup.
+	doctorDogOrphanAlertCount = 20
+
+	// doctorDogBackupStaleSeconds is the backup age (in seconds) that triggers
+	// an immediate backup sync. 1 hour = 3600 seconds.
+	doctorDogBackupStaleSeconds = 3600.0
+
+	// doctorDogActionCooldown prevents repeated actions within this window.
+	// Each action type has its own cooldown tracker.
+	doctorDogActionCooldown = 10 * time.Minute
 )
 
 // DoctorDogConfig holds configuration for the doctor_dog patrol.
@@ -120,9 +138,10 @@ func doctorDogDatabases(config *DaemonPatrolConfig) []string {
 	return []string{"hq", "beads", "gastown", "sky", "wyvern", "beads_hop"}
 }
 
-// runDoctorDog performs all health checks and writes a structured report.
-// The doctor is a thermometer, not a thermostat — it reports data and takes
-// no action. Agents (Deacon/Mayor) consume the report for decision-making.
+// runDoctorDog performs all health checks, writes a structured report, and
+// takes automated response actions when thresholds are exceeded.
+// Actions: restart server if unreachable, trigger janitor if orphans > 20,
+// trigger backup if stale > 1hr, escalate to Mayor if latency > 5s.
 func (d *Daemon) runDoctorDog() {
 	if !IsPatrolEnabled(d.patrolConfig, "doctor_dog") {
 		return
@@ -171,6 +190,9 @@ func (d *Daemon) runDoctorDog() {
 
 	// Write structured report for agent consumption
 	d.writeDoctorDogReport(report)
+
+	// Evaluate report and take automated response actions
+	d.doctorDogRespond(report)
 
 	d.logger.Printf("doctor_dog: health check cycle complete")
 }
@@ -506,6 +528,59 @@ func dirSize(path string) (int64, error) {
 		return nil
 	})
 	return size, err
+}
+
+// doctorDogRespond evaluates the health report and takes automated actions:
+// - Restart server if TCP unreachable
+// - Trigger janitor if database count > 20 (orphan accumulation)
+// - Trigger backup if backup stale > 1 hour
+// - Escalate to Mayor if query latency > 5 seconds
+// Each action has a cooldown to prevent action storms.
+func (d *Daemon) doctorDogRespond(report *DoctorDogReport) {
+	now := time.Now()
+
+	// Action 1: Restart server if unreachable
+	if !report.TCPReachable {
+		if now.Sub(d.lastDoctorRestart) >= doctorDogActionCooldown {
+			d.lastDoctorRestart = now
+			d.logger.Printf("doctor_dog: ACTION: server unreachable, triggering restart")
+			d.ensureDoltServerRunning()
+		} else {
+			d.logger.Printf("doctor_dog: server unreachable but restart cooldown active")
+		}
+	}
+
+	// Action 2: Escalate to Mayor if latency > 5s
+	if report.Latency != nil && report.Latency.Error == "" && report.Latency.DurationMs > doctorDogLatencyAlertMs {
+		if now.Sub(d.lastDoctorEscalate) >= doctorDogActionCooldown {
+			d.lastDoctorEscalate = now
+			d.logger.Printf("doctor_dog: ACTION: latency %.0fms > %.0fms threshold, escalating",
+				report.Latency.DurationMs, doctorDogLatencyAlertMs)
+			d.escalate("doctor_dog", fmt.Sprintf("Dolt query latency %.0fms exceeds %ds threshold",
+				report.Latency.DurationMs, int(doctorDogLatencyAlertMs/1000)))
+		}
+	}
+
+	// Action 3: Trigger janitor if orphan databases > 20
+	if report.Databases != nil && report.Databases.Error == "" && report.Databases.Count > doctorDogOrphanAlertCount {
+		if now.Sub(d.lastDoctorJanitor) >= doctorDogActionCooldown {
+			d.lastDoctorJanitor = now
+			d.logger.Printf("doctor_dog: ACTION: %d databases (> %d threshold), triggering janitor",
+				report.Databases.Count, doctorDogOrphanAlertCount)
+			go d.runJanitorDog()
+		}
+	}
+
+	// Action 4: Trigger backup if stale > 1 hour
+	if report.BackupAge != nil && report.BackupAge.Error == "" && !report.BackupAge.Missing &&
+		report.BackupAge.AgeSeconds > doctorDogBackupStaleSeconds {
+		if now.Sub(d.lastDoctorBackup) >= doctorDogActionCooldown {
+			d.lastDoctorBackup = now
+			d.logger.Printf("doctor_dog: ACTION: backup %.0fs stale (> %.0fs threshold), triggering backup",
+				report.BackupAge.AgeSeconds, doctorDogBackupStaleSeconds)
+			go d.syncDoltBackups()
+		}
+	}
 }
 
 // writeDoctorDogReport writes the report as JSON to a well-known location.
