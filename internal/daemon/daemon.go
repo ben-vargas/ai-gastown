@@ -359,6 +359,18 @@ func (d *Daemon) Run() error {
 		d.logger.Printf("JSONL git backup ticker started (interval %v)", interval)
 	}
 
+	// Start wisp reaper ticker if configured.
+	// Closes stale wisps (abandoned molecule steps, old patrol data) across all databases.
+	var wispReaperTicker *time.Ticker
+	var wispReaperChan <-chan time.Time
+	if IsPatrolEnabled(d.patrolConfig, "wisp_reaper") {
+		interval := wispReaperInterval(d.patrolConfig)
+		wispReaperTicker = time.NewTicker(interval)
+		wispReaperChan = wispReaperTicker.C
+		defer wispReaperTicker.Stop()
+		d.logger.Printf("Wisp reaper ticker started (interval %v)", interval)
+	}
+
 	// Note: PATCH-010 uses per-session hooks in deacon/manager.go (SetAutoRespawnHook).
 	// Global pane-died hooks don't fire reliably in tmux 3.2a, so we rely on the
 	// per-session approach which has been tested to work for continuous recovery.
@@ -408,6 +420,13 @@ func (d *Daemon) Run() error {
 			// commits and pushes to git repo.
 			if !d.isShutdownInProgress() {
 				d.syncJsonlGitBackup()
+			}
+
+		case <-wispReaperChan:
+			// Periodic wisp reaper — closes stale wisps (abandoned molecule steps,
+			// old patrol data) to prevent unbounded table growth (Clown Show audit).
+			if !d.isShutdownInProgress() {
+				d.reapWisps()
 			}
 
 		case <-timer.C:
