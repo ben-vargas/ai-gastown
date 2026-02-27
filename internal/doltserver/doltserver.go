@@ -726,6 +726,12 @@ func KillImposters(townRoot string) error {
 // checkPortAvailable verifies a TCP port is free before starting the server.
 // Returns a user-friendly error if the port is already in use, which commonly
 // happens when multiple Gas Town instances share the same Dolt port.
+// CheckPortAvailable verifies that a TCP port is free for use as a Dolt server.
+// Returns a user-friendly error if the port is already in use.
+func CheckPortAvailable(port int) error {
+	return checkPortAvailable(port)
+}
+
 func checkPortAvailable(port int) error {
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {

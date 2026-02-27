@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,6 +40,7 @@ var (
 	installShell      bool
 	installWrappers   bool
 	installSupervisor bool
+	installDoltPort   int
 )
 
 var installCmd = &cobra.Command{
@@ -83,6 +85,7 @@ func init() {
 	installCmd.Flags().BoolVar(&installShell, "shell", false, "Install shell integration (sets GT_TOWN_ROOT/GT_RIG env vars)")
 	installCmd.Flags().BoolVar(&installWrappers, "wrappers", false, "Install gt-codex/gt-gemini/gt-opencode wrapper scripts to ~/bin/")
 	installCmd.Flags().BoolVar(&installSupervisor, "supervisor", false, "Configure launchd/systemd for daemon auto-restart")
+	installCmd.Flags().IntVar(&installDoltPort, "dolt-port", 0, "Dolt SQL server port (default 3307; set when another instance owns the default port)")
 	rootCmd.AddCommand(installCmd)
 }
 
@@ -148,6 +151,19 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		if _, err := exec.LookPath("dolt"); err == nil {
 			if err := doltserver.EnsureDoltIdentity(); err != nil {
 				return fmt.Errorf("dolt identity setup failed (required for beads): %w\n\nTo fix, run:\n  dolt config --global --add user.name \"Your Name\"\n  dolt config --global --add user.email \"you@example.com\"", err)
+			}
+
+			// Preflight: check Dolt port availability before creating any files.
+			// A port conflict would leave a partial install that needs --force to retry.
+			port := doltserver.DefaultPort
+			if installDoltPort != 0 {
+				port = installDoltPort
+				os.Setenv("GT_DOLT_PORT", strconv.Itoa(port))
+			}
+			if err := doltserver.CheckPortAvailable(port); err != nil {
+				// Reconstruct the original command for the suggestion.
+				origArgs := strings.Join(os.Args[1:], " ")
+				return fmt.Errorf("%w\n\nRerun with a free port:\n  gt %s --dolt-port <port>", err, origArgs)
 			}
 		}
 	}
