@@ -82,9 +82,17 @@ func runDashboard(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Build the URL (use localhost for display/browser even if binding to 0.0.0.0)
-	url := fmt.Sprintf("http://localhost:%d", dashboardPort)
+	// Build the listen address and display URL
 	listenAddr := fmt.Sprintf("%s:%d", dashboardBind, dashboardPort)
+	displayHost := dashboardBind
+	if displayHost == "0.0.0.0" {
+		if hostname, err := os.Hostname(); err == nil {
+			displayHost = hostname
+		} else {
+			displayHost = "localhost"
+		}
+	}
+	url := fmt.Sprintf("http://%s:%d", displayHost, dashboardPort)
 
 	// Open browser if requested
 	if dashboardOpen {
