@@ -114,9 +114,11 @@ func (d *Daemon) runCompactorDog() {
 	databases := d.compactorDatabases()
 	if len(databases) == 0 {
 		d.logger.Printf("compactor_dog: no databases to compact")
-		mol.failStep("scan", "no databases found")
+		mol.failStep("inspect", "no databases found")
 		return
 	}
+
+	mol.closeStep("inspect")
 
 	compacted := 0
 	skipped := 0
@@ -166,6 +168,8 @@ func (d *Daemon) runCompactorDog() {
 	} else {
 		mol.closeStep("compact")
 	}
+
+	mol.closeStep("verify")
 
 	d.logger.Printf("compactor_dog: cycle complete — compacted=%d skipped=%d errors=%d",
 		compacted, skipped, errors)

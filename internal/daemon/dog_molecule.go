@@ -100,15 +100,58 @@ func (dm *dogMol) failStep(stepSlug, reason string) {
 	}
 }
 
-// close closes the root molecule wisp.
+// close closes all remaining open child step wisps, then closes the root molecule wisp.
+// This prevents orphan step wisps from accumulating when callers forget to
+// explicitly close individual steps (the root cause of gt-3o59).
 func (dm *dogMol) close() {
 	if dm.rootID == "" {
 		return
 	}
 
+	// Close any step wisps that were never explicitly closed/failed.
+	dm.closeRemainingSteps()
+
 	_, err := dm.runBd("close", dm.rootID)
 	if err != nil {
 		dm.logger.Printf("dog_molecule: close root %s failed (non-fatal): %v", dm.rootID, err)
+	}
+}
+
+// closeRemainingSteps queries all children of the root wisp and closes any that
+// are still open. This is the backstop that prevents step wisp leaks regardless
+// of whether individual callers remembered to close each step.
+func (dm *dogMol) closeRemainingSteps() {
+	if dm.rootID == "" {
+		return
+	}
+
+	out, err := dm.runBd("show", dm.rootID, "--children", "--format=jsonl")
+	if err != nil {
+		dm.logger.Printf("dog_molecule: closeRemainingSteps: list children of %s failed: %v", dm.rootID, err)
+		return
+	}
+
+	closed := 0
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line == "" {
+			continue
+		}
+		id := extractJSONField(line, "id")
+		status := extractJSONField(line, "status")
+		if id == "" || status == "" {
+			continue
+		}
+		// Close any child that is still open/hooked/in_progress.
+		if status == "open" || status == "hooked" || status == "in_progress" {
+			if _, err := dm.runBd("close", id); err != nil {
+				dm.logger.Printf("dog_molecule: closeRemainingSteps: close %s failed: %v", id, err)
+			} else {
+				closed++
+			}
+		}
+	}
+	if closed > 0 {
+		dm.logger.Printf("dog_molecule: closeRemainingSteps: closed %d orphan step wisp(s) under %s", closed, dm.rootID)
 	}
 }
 
@@ -172,6 +215,12 @@ func (dm *dogMol) discoverSteps() {
 			dm.stepIDs["verify"] = id
 		case strings.Contains(titleLower, "compact"):
 			dm.stepIDs["compact"] = id
+		case strings.Contains(titleLower, "auto-close") || strings.Contains(titleLower, "auto close"):
+			dm.stepIDs["auto-close"] = id
+		case strings.Contains(titleLower, "sync"):
+			dm.stepIDs["sync"] = id
+		case strings.Contains(titleLower, "offsite"):
+			dm.stepIDs["offsite"] = id
 		}
 	}
 }

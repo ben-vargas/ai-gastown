@@ -180,6 +180,8 @@ func (d *Daemon) reapWisps() {
 		mol.closeStep("reap")
 	}
 
+	mol.closeStep("auto-close")
+
 	// --- PURGE STEP: delete closed wisps older than purge age ---
 
 	totalPurged := 0

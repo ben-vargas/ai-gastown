@@ -165,6 +165,8 @@ func (d *Daemon) syncJsonlGitBackup() {
 		d.escalate("jsonl_git_backup", fmt.Sprintf("post-scrub verification found %d suspicious records — review JSONL exports", remaining))
 	}
 
+	mol.closeStep("verify")
+
 	// Phase D: Spike detection — compare current counts to previous commit.
 	threshold := spikeThreshold(config)
 	spikes := d.verifyExportCounts(gitRepo, databases, counts, threshold)
