@@ -1,4 +1,4 @@
-package polecat
+package mail
 
 import (
 	"os"

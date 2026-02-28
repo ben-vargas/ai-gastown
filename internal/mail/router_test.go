@@ -1004,10 +1004,10 @@ func TestValidateRecipient(t *testing.T) {
 		t.Skipf("bd CLI not functional, skipping test: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
 
-	// Start an ephemeral Dolt server to prevent bd init from creating
+	// Start an ephemeral Dolt container to prevent bd init from creating
 	// databases on the production server (port 3307).
-	testutil.RequireDoltServer(t)
-	doltPort, _ := strconv.Atoi(testutil.DoltTestPort())
+	testutil.RequireDoltContainer(t)
+	doltPort, _ := strconv.Atoi(testutil.DoltContainerPort())
 
 	// Create isolated beads environment for testing
 	tmpDir := t.TempDir()

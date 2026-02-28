@@ -15,15 +15,10 @@ import (
 	"github.com/steveyegge/gastown/internal/testutil"
 )
 
-// requireDoltServer delegates to testutil.RequireDoltServer.
+// requireDoltServer delegates to testutil.RequireDoltContainer.
 func requireDoltServer(t *testing.T) {
 	t.Helper()
-	testutil.RequireDoltServer(t)
-}
-
-// cleanupDoltServer delegates to testutil.CleanupDoltServer.
-func cleanupDoltServer() {
-	testutil.CleanupDoltServer()
+	testutil.RequireDoltContainer(t)
 }
 
 // configureTestGitIdentity sets git global config in an isolated HOME directory
@@ -68,13 +63,15 @@ func cleanStaleBeadsDatabases(t *testing.T) {
 	}
 }
 
-// dropStaleBeadsDatabases connects to the Dolt server and drops all beads_*
-// databases that were created by earlier tests. Uses three strategies:
+// dropStaleBeadsDatabases connects to the Dolt container and drops all beads_*
+// databases that were created by earlier tests. Uses SQL-level cleanup only:
 //  1. SHOW DATABASES → DROP any visible beads_* databases
 //  2. DROP known phantom database names from beads_db_init_test.go
-//  3. Physical cleanup of beads_* directories from the server's data-dir
+//  3. Purge dropped databases from Dolt's catalog
+//
+// No filesystem cleanup needed — container data is ephemeral.
 func dropStaleBeadsDatabases() error {
-	dsn := "root:@tcp(127.0.0.1:" + testutil.DoltTestPort() + ")/"
+	dsn := "root:@tcp(127.0.0.1:" + testutil.DoltContainerPort() + ")/"
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return fmt.Errorf("connecting to dolt server: %w", err)
@@ -143,30 +140,6 @@ func dropStaleBeadsDatabases() error {
 	// Strategy 3: Purge dropped databases from Dolt's catalog.
 	if _, err := db.Exec("CALL dolt_purge_dropped_databases()"); err != nil {
 		fmt.Fprintf(os.Stderr, "[dropStaleBeadsDatabases] purge failed: %v\n", err)
-	}
-
-	// Strategy 4: Remove beads_* and known test database directories from the
-	// server's data-dir. Scoped to avoid removing unrelated databases.
-	pidPath := testutil.PidFilePathForPort(testutil.DoltTestPort())
-	pidData, _ := os.ReadFile(pidPath)
-	if pidData != nil {
-		lines := strings.SplitN(string(pidData), "\n", 3)
-		if len(lines) >= 2 {
-			dataDir := strings.TrimSpace(lines[1])
-			if dataDir != "" {
-				entries, _ := os.ReadDir(dataDir)
-				for _, e := range entries {
-					if !e.IsDir() {
-						continue
-					}
-					shouldRemove := strings.HasPrefix(e.Name(), "beads_") || e.Name() == "hq"
-					if shouldRemove {
-						os.RemoveAll(dataDir + "/" + e.Name())
-						dropped = append(dropped, e.Name()+"(disk)")
-					}
-				}
-			}
-		}
 	}
 
 	fmt.Fprintf(os.Stderr, "[dropStaleBeadsDatabases] cleaned: %v\n", dropped)
