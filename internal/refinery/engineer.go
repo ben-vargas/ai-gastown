@@ -1006,7 +1006,7 @@ func (e *Engineer) HandleMRInfoFailure(mr *MRInfo, result ProcessResult) {
 //
 //	Title: Resolve merge conflicts: <original-issue-title>
 //	Type: task
-//	Priority: inherit from original + boost (P2 -> P1)
+//	Priority: inherit from original (ZFC: agent decides boost strategy)
 //	Parent: original MR bead
 //	Description: metadata including branch, conflict SHA, etc.
 //
