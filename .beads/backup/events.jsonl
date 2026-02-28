@@ -2374,3 +2374,4 @@
 {"actor":"gastown/witness","comment":"","created_at":"2026-02-28T05:07:21Z","event_type":"closed","id":5382,"issue_id":"gt-wisp-xj80l","new_value":"burned: polecat nuked","old_value":""}
 {"actor":"gastown/refinery","comment":"","created_at":"2026-02-28T05:41:40Z","event_type":"closed","id":5383,"issue_id":"gt-wisp-s2vyx","new_value":"patrol cycle complete: Idle cycle 1. Queue empty, inbox clean. RSS: 3MB. Continuing patrol.","old_value":""}
 {"actor":"gastown/refinery","comment":"","created_at":"2026-02-28T05:57:04Z","event_type":"closed","id":5384,"issue_id":"gt-wisp-s2vyx","new_value":"patrol cycle complete: Idle cycle 2. Queue empty, inbox clean. RSS: 3MB. Continuing.","old_value":""}
+{"actor":"gastown/refinery","comment":"","created_at":"2026-02-28T06:14:39Z","event_type":"closed","id":5385,"issue_id":"gt-wisp-rcfy3k","new_value":"Inbox clean. One stale handoff archived.","old_value":""}
