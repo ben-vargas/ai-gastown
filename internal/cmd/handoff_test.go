@@ -717,6 +717,63 @@ func TestCollectGitState(t *testing.T) {
 		}
 	})
 
+	t.Run("includes_diff_stat_for_committed_changes", func(t *testing.T) {
+		// Create a temp git repo with multiple commits
+		tmpDir := t.TempDir()
+		cmds := [][]string{
+			{"git", "init"},
+			{"git", "config", "user.email", "test@test.com"},
+			{"git", "config", "user.name", "Test"},
+		}
+		for _, args := range cmds {
+			cmd := exec.Command(args[0], args[1:]...)
+			cmd.Dir = tmpDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("%v failed: %s", args, out)
+			}
+		}
+
+		// Create and commit a file
+		if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main\n"), 0644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		for _, args := range [][]string{
+			{"git", "add", "main.go"},
+			{"git", "commit", "-m", "add main.go"},
+		} {
+			cmd := exec.Command(args[0], args[1:]...)
+			cmd.Dir = tmpDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("%v failed: %s", args, out)
+			}
+		}
+
+		// Add another commit
+		if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main\nfunc main() {}\n"), 0644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		for _, args := range [][]string{
+			{"git", "add", "main.go"},
+			{"git", "commit", "-m", "add main func"},
+		} {
+			cmd := exec.Command(args[0], args[1:]...)
+			cmd.Dir = tmpDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("%v failed: %s", args, out)
+			}
+		}
+
+		t.Chdir(tmpDir)
+		state := collectGitState()
+
+		if !strings.Contains(state, "Files changed") {
+			t.Errorf("expected 'Files changed' diff stat in state, got: %s", state)
+		}
+		if !strings.Contains(state, "main.go") {
+			t.Errorf("expected 'main.go' in diff stat, got: %s", state)
+		}
+	})
+
 	t.Run("returns_empty_outside_git_repo", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		t.Chdir(tmpDir)
@@ -726,4 +783,47 @@ func TestCollectGitState(t *testing.T) {
 			t.Errorf("expected empty string outside git repo, got: %s", state)
 		}
 	})
+}
+
+// TestMinimumViableHandoff verifies that the fallback handoff always produces
+// actionable recovery instructions. (GH#1996)
+func TestMinimumViableHandoff(t *testing.T) {
+	result := minimumViableHandoff()
+
+	if result == "" {
+		t.Fatal("minimumViableHandoff() returned empty string")
+	}
+	if !strings.Contains(result, "auto-generated fallback") {
+		t.Error("expected fallback header")
+	}
+	if !strings.Contains(result, "gt prime") {
+		t.Error("expected 'gt prime' recovery step")
+	}
+	if !strings.Contains(result, "gt mol status") {
+		t.Error("expected 'gt mol status' recovery step")
+	}
+}
+
+// TestCollectHandoffState_FallbackOnEmpty verifies that collectHandoffState
+// returns actionable content even when all external commands fail. (GH#1996)
+func TestCollectHandoffState_FallbackOnEmpty(t *testing.T) {
+	// Run from a non-git temp dir with no gt/bd commands available.
+	// This simulates worst case: everything fails.
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	// Override PATH to ensure gt/bd commands don't resolve
+	t.Setenv("PATH", tmpDir)
+
+	result := collectHandoffState()
+
+	if result == "" {
+		t.Fatal("collectHandoffState() returned empty string — should never happen")
+	}
+	if !strings.Contains(result, "auto-generated fallback") {
+		t.Errorf("expected fallback template when all sources fail, got: %s", result)
+	}
+	if !strings.Contains(result, "gt prime") {
+		t.Errorf("expected recovery steps in fallback, got: %s", result)
+	}
 }

@@ -675,6 +675,20 @@ func (g *Git) RecentCommits(n int) (string, error) {
 	return g.run("log", "--oneline", fmt.Sprintf("-%d", n))
 }
 
+// RecentDiffStat returns a compact summary of files changed in the last n commits.
+// Uses --stat to show which files were touched and how many lines changed.
+// Falls back gracefully when there are fewer than n commits (uses root commit).
+// Returns empty string if there are no commits or the repo is empty.
+func (g *Git) RecentDiffStat(n int) (string, error) {
+	// Try HEAD~n first; if it fails (fewer than n commits), use --root diff
+	result, err := g.run("diff", "--stat", fmt.Sprintf("HEAD~%d..HEAD", n))
+	if err != nil {
+		// Fallback: diff from root to HEAD (all commits)
+		result, err = g.run("log", "--format=", "--stat", fmt.Sprintf("-%d", n))
+	}
+	return result, err
+}
+
 // DeleteRemoteBranch deletes a branch on the remote.
 func (g *Git) DeleteRemoteBranch(remote, branch string) error {
 	_, err := g.run("push", remote, "--delete", branch)

@@ -1351,11 +1351,25 @@ func hookBeadForHandoff(beadID string) error {
 }
 
 // collectHandoffState gathers current state for handoff context.
-// Collects: git workspace state (deterministic), inbox summary, ready beads, hooked work.
+// Collects: molecule context, git workspace state (deterministic), inbox summary,
+// ready beads, hooked work, and in-progress beads.
+//
 // Git state is always collected first via Go library calls (no shelling out) to ensure
-// the handoff always contains useful context even when external commands fail. (GH#1996)
+// the handoff always contains useful context even when external commands fail.
+// If the total collected state is too sparse, a structured fallback template is appended
+// so the successor always has actionable context. (GH#1996)
 func collectHandoffState() string {
 	var parts []string
+
+	// Active molecule — the primary assignment context. Collected first because
+	// this is what the successor most needs to know: what was I working on? (GH#1996)
+	molOutput, err := exec.Command("gt", "mol", "status").Output()
+	if err == nil {
+		molStr := strings.TrimSpace(string(molOutput))
+		if molStr != "" && !strings.Contains(molStr, "Nothing on hook") && !strings.Contains(molStr, "no work slung") {
+			parts = append(parts, "## Active Assignment\n"+molStr)
+		}
+	}
 
 	// Deterministic git state — always collected via Go library, never empty. (GH#1996)
 	if gitState := collectGitState(); gitState != "" {
@@ -1413,10 +1427,37 @@ func collectHandoffState() string {
 	}
 
 	if len(parts) == 0 {
-		return "No active state to report."
+		return minimumViableHandoff()
 	}
 
-	return strings.Join(parts, "\n\n")
+	result := strings.Join(parts, "\n\n")
+
+	// Ensure minimum viable handoff: if collected state is too sparse (just a branch
+	// name and commit hashes), append a structured fallback so the successor has
+	// something actionable to work with. (GH#1996)
+	if len(result) < 100 {
+		result += "\n\n" + minimumViableHandoff()
+	}
+
+	return result
+}
+
+// minimumViableHandoff returns a structured fallback summary when auto-collection
+// produces empty or sparse results. This ensures the successor session always has
+// actionable context to continue from, even when git state is clean and no external
+// commands returned useful data. (GH#1996)
+func minimumViableHandoff() string {
+	lines := []string{
+		"## Session Context (auto-generated fallback)",
+		"Auto-handoff triggered with limited state available.",
+		"Recommended recovery steps:",
+		"1. Run `gt prime` for full role context",
+		"2. Check `gt mol status` for active assignment",
+		"3. Check `gt mail inbox` for pending messages",
+		"4. Check `bd list --status=in_progress` for active work",
+		"5. Check `git log --oneline -10` for recent work context",
+	}
+	return strings.Join(lines, "\n")
 }
 
 // collectGitState captures deterministic workspace state using the Go git library.
@@ -1470,6 +1511,18 @@ func collectGitState() string {
 	// Recent commits (last 5) for context on what was being worked on.
 	if logStr, err := g.RecentCommits(5); err == nil && logStr != "" {
 		lines = append(lines, "Recent commits:\n"+logStr)
+	}
+
+	// Diff stat of recent commits — shows which files were touched and scope of changes.
+	// This gives the successor a concrete view of what was worked on, even if the
+	// workspace is now clean (committed + pushed). (GH#1996)
+	if diffStat, err := g.RecentDiffStat(5); err == nil && diffStat != "" {
+		// Limit to 15 lines to avoid bloat on large changesets
+		statLines := strings.Split(diffStat, "\n")
+		if len(statLines) > 15 {
+			statLines = append(statLines[:14], "... (truncated)")
+		}
+		lines = append(lines, "Files changed (last 5 commits):\n"+strings.Join(statLines, "\n"))
 	}
 
 	if len(lines) == 0 {
