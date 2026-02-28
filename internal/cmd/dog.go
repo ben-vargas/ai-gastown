@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -18,6 +17,7 @@ import (
 	"github.com/steveyegge/gastown/internal/plugin"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/util"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -690,7 +690,7 @@ func runDogDone(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Session %s will terminate in 3s\n", sessionID)
 	killCmd := exec.Command("bash", "-c",
 		fmt.Sprintf("sleep 3 && tmux kill-session -t '%s' 2>/dev/null", sessionID))
-	killCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	util.SetProcessGroup(killCmd)
 	if err := killCmd.Start(); err != nil {
 		// Non-fatal: session may not be tmux-based (e.g., manual testing).
 		fmt.Fprintf(os.Stderr, "warning: failed to schedule session termination: %v\n", err)
