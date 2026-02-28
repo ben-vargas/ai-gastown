@@ -85,8 +85,6 @@ type AgentFields struct {
 // These represent the beads-level agent lifecycle state, which is distinct from
 // the polecat.State lifecycle type (though values overlap).
 const (
-	AgentStateIdle         = "idle"          // Available for new work
-	AgentStateStuck        = "stuck"         // Explicitly signaled need for assistance
 	AgentStateAwaitingGate = "awaiting-gate" // Waiting for a gate condition, intentional pause
 )
 
