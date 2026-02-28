@@ -694,7 +694,7 @@ func (m *SessionManager) resolveBeadsDir(issueID, fallbackDir string) string {
 	return beads.ResolveHookDir(townRoot, issueID, fallbackDir)
 }
 
-// validateIssue checks that an issue exists and is not tombstoned.
+// validateIssue checks that an issue exists and is not in a terminal state.
 // This must be called before starting a session to avoid CPU spin loops
 // from agents retrying work on invalid issues.
 func (m *SessionManager) validateIssue(issueID, workDir string) error {
@@ -718,8 +718,8 @@ func (m *SessionManager) validateIssue(issueID, workDir string) error {
 	if len(issues) == 0 {
 		return fmt.Errorf("%w: %s", ErrIssueInvalid, issueID)
 	}
-	if issues[0].Status == beads.StatusTombstone {
-		return fmt.Errorf("%w: %s is tombstoned", ErrIssueInvalid, issueID)
+	if beads.IssueStatus(issues[0].Status).IsTerminal() {
+		return fmt.Errorf("%w: %s has terminal status %s", ErrIssueInvalid, issueID, issues[0].Status)
 	}
 	return nil
 }

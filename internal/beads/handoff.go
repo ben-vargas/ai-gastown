@@ -11,26 +11,14 @@ import (
 	"github.com/steveyegge/gastown/internal/lock"
 )
 
-// Issue status constants. These are the well-known status values used by the
-// beads system. Defining them here prevents hardcoded string comparisons
-// scattered throughout the codebase.
+// Issue status constants kept as untyped strings for backward compatibility.
+// The typed versions (IssueStatus) are in status.go.
 const (
-	// StatusOpen is the default status for new issues.
-	StatusOpen = "open"
-
-	// StatusInProgress means an agent is actively working on the issue.
-	StatusInProgress = "in_progress"
-
 	// StatusPinned is the status for pinned beads that never get closed.
-	// These are "domain table" beads like role definitions that persist permanently.
 	StatusPinned = "pinned"
 
 	// StatusHooked is the status for beads on an agent's hook (work assignment).
-	// This is distinct from pinned - hooked beads are active work, not permanent records.
 	StatusHooked = "hooked"
-
-	// StatusTombstone marks a bead as deleted/archived.
-	StatusTombstone = "tombstone"
 )
 
 // HandoffBeadTitle returns the well-known title for a role's handoff bead.

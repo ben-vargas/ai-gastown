@@ -1250,7 +1250,7 @@ func detectZombieDeadSession(workDir, rigName, polecatName, agentBeadID, session
 		PolecatName: polecatName,
 		AgentState:  agentState,
 		HookBead:    hookBead,
-		WasActive:   hookBead != "" || beads.IsActiveAgentState(agentState),
+		WasActive:   hookBead != "" || beads.AgentState(agentState).IsActive(),
 	}
 
 	// gt-dsgp: Restart instead of nuking. For dirty state, escalate AND restart.
@@ -1264,7 +1264,7 @@ func isZombieState(agentState, hookBead string) bool {
 	if hookBead != "" {
 		return true
 	}
-	return beads.IsActiveAgentState(agentState)
+	return beads.AgentState(agentState).IsActive()
 }
 
 // handleZombieRestart determines the restart action for a confirmed zombie (gt-dsgp).

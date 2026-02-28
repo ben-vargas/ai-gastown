@@ -866,7 +866,7 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear, selfNuke bool) 
 		_, fields, aErr := m.beads.GetAgentBead(agentID)
 		if aErr == nil && fields != nil && fields.ActiveMR != "" {
 			mrBead, mrErr := m.beads.Show(fields.ActiveMR)
-			if mrErr == nil && mrBead != nil && mrBead.Status == beads.StatusOpen {
+			if mrErr == nil && mrBead != nil && beads.IssueStatus(mrBead.Status).BlocksRemoval() {
 				return fmt.Errorf("cannot remove polecat %s: MR %s is still open in merge queue\nRefinery will process the MR and clean up after merge\nUse --force to override (risks data loss)", name, fields.ActiveMR)
 			}
 		}
@@ -1675,7 +1675,7 @@ func (m *Manager) SetState(name string, state State) error {
 		// merge conflicts when gt done runs. The polecat should claim work via gt prime,
 		// not have sling change status during spawn (gt-zecmc).
 		if issue != nil && issue.Status != beads.StatusHooked {
-			status := beads.StatusInProgress
+			status := "in_progress"
 			if err := m.beads.Update(issue.ID, beads.UpdateOptions{Status: &status}); err != nil {
 				return fmt.Errorf("setting issue status: %w", err)
 			}
@@ -1795,7 +1795,7 @@ func (m *Manager) loadFromBeads(name string) (*Polecat, error) {
 
 	// Persistent polecat model (gt-4ac): check agent_state for idle detection.
 	// An idle polecat has no hook_bead and agent_state="idle".
-	if agentErr == nil && fields != nil && fields.AgentState == beads.AgentStateIdle {
+	if agentErr == nil && fields != nil && beads.AgentState(fields.AgentState) == beads.AgentStateIdle {
 		return &Polecat{
 			Name:      name,
 			Rig:       m.rig.Name,
@@ -2027,7 +2027,7 @@ func assessStaleness(info *StalenessInfo, threshold int) (bool, string) {
 
 	// Check for non-observable states that indicate intentional pause
 	// (stuck, awaiting-gate are still stored in beads per gt-zecmc)
-	if info.AgentState == beads.AgentStateStuck || info.AgentState == beads.AgentStateAwaitingGate {
+	if beads.AgentState(info.AgentState).ProtectsFromCleanup() {
 		return false, fmt.Sprintf("agent_state=%s (intentional pause)", info.AgentState)
 	}
 

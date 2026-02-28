@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/steveyegge/gastown/internal/beads"
 )
 
 // Protocol message patterns for Witness inbox routing.
@@ -50,20 +52,20 @@ const (
 	ProtoUnknown           ProtocolType = "unknown"
 )
 
-// AgentState constants define the lifecycle states for polecat agent beads.
-// These are written to the agent bead's agent_state field and read by the
-// witness survey-workers step to discover polecat status without mail.
-type AgentState string
+// AgentState is an alias for beads.AgentState. Agent state constants are
+// defined in the beads package (the canonical source) and re-exported here
+// for backward compatibility. See beads/status.go and gt-4d7p.
+type AgentState = beads.AgentState
 
 const (
-	AgentStateRunning   AgentState = "running"
-	AgentStateIdle      AgentState = "idle"
-	AgentStateDone      AgentState = "done"
-	AgentStateStuck     AgentState = "stuck"
-	AgentStateEscalated AgentState = "escalated"
-	AgentStateSpawning  AgentState = "spawning"
-	AgentStateWorking   AgentState = "working"
-	AgentStateNuked     AgentState = "nuked"
+	AgentStateRunning   = beads.AgentStateRunning
+	AgentStateIdle      = beads.AgentStateIdle
+	AgentStateDone      = beads.AgentStateDone
+	AgentStateStuck     = beads.AgentStateStuck
+	AgentStateEscalated = beads.AgentStateEscalated
+	AgentStateSpawning  = beads.AgentStateSpawning
+	AgentStateWorking   = beads.AgentStateWorking
+	AgentStateNuked     = beads.AgentStateNuked
 )
 
 // ExitType constants define the completion outcome for polecat work.
