@@ -303,51 +303,25 @@ func (m *DoltServerManager) isRunning() (int, bool) {
 		m.process = nil
 	}
 
-	// Check PID file
-	data, err := os.ReadFile(m.pidFile())
-	if err != nil {
+	// Check PID file with nonce-based ownership verification
+	pid, alive, err := verifyPIDOwnership(m.pidFile())
+	if err != nil || pid == 0 {
 		return 0, false
 	}
 
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil {
-		return 0, false
-	}
-
-	// Verify process is alive and is dolt
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return 0, false
-	}
-
-	if !isProcessAlive(process) {
+	if !alive {
 		// Process not running, clean up stale PID file
 		_ = os.Remove(m.pidFile())
 		return 0, false
 	}
 
-	// Verify it's actually dolt sql-server
-	if !isDoltSqlServer(pid) {
-		_ = os.Remove(m.pidFile())
+	process, err := os.FindProcess(pid)
+	if err != nil {
 		return 0, false
 	}
 
 	m.process = process
 	return pid, true
-}
-
-// isDoltSqlServer checks if a PID is actually a dolt sql-server process.
-func isDoltSqlServer(pid int) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "ps", "-p", strconv.Itoa(pid), "-o", "command=")
-	output, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-
-	cmdline := strings.TrimSpace(string(output))
-	return strings.Contains(cmdline, "dolt") && strings.Contains(cmdline, "sql-server")
 }
 
 // EnsureRunning ensures the Dolt server is running.
@@ -810,8 +784,8 @@ func (m *DoltServerManager) startLocked() error {
 	m.process = cmd.Process
 	m.startedAt = time.Now()
 
-	// Write PID file
-	if err := os.WriteFile(m.pidFile(), []byte(strconv.Itoa(cmd.Process.Pid)), 0644); err != nil {
+	// Write PID file with nonce for ownership verification
+	if _, err := writePIDFile(m.pidFile(), cmd.Process.Pid); err != nil {
 		m.logger("Warning: failed to write PID file: %v", err)
 	}
 

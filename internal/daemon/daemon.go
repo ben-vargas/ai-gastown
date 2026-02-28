@@ -287,8 +287,8 @@ func (d *Daemon) Run() error {
 		}
 	}
 
-	// Write PID file
-	if err := os.WriteFile(d.config.PidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
+	// Write PID file with nonce for ownership verification
+	if _, err := writePIDFile(d.config.PidFile, os.Getpid()); err != nil {
 		return fmt.Errorf("writing PID file: %w", err)
 	}
 	defer func() { _ = os.Remove(d.config.PidFile) }() // best-effort cleanup
@@ -1522,65 +1522,26 @@ func IsShutdownInProgress(townRoot string) bool {
 // duplicate daemons. This function is for status checks and cleanup.
 func IsRunning(townRoot string) (bool, int, error) {
 	pidFile := filepath.Join(townRoot, "daemon", "daemon.pid")
-	data, err := os.ReadFile(pidFile)
+
+	pid, alive, err := verifyPIDOwnership(pidFile)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return false, 0, nil
-		}
-		// Return error for other failures (permissions, I/O)
-		return false, 0, fmt.Errorf("reading PID file: %w", err)
+		return false, 0, fmt.Errorf("checking PID file: %w", err)
 	}
 
-	pidStr := strings.TrimSpace(string(data))
-	pid, err := strconv.Atoi(pidStr)
-	if err != nil {
-		// Corrupted PID file - return error, not silent false
-		return false, 0, fmt.Errorf("invalid PID in file %q: %w", pidStr, err)
-	}
-
-	// Check if process is alive
-	process, err := os.FindProcess(pid)
-	if err != nil {
+	if pid == 0 {
+		// No PID file
 		return false, 0, nil
 	}
 
-	// On Unix, FindProcess always succeeds. Send signal 0 to check if alive.
-	if err := process.Signal(syscall.Signal(0)); err != nil {
+	if !alive {
 		// Process not running, clean up stale PID file
 		if err := os.Remove(pidFile); err == nil {
-			// Successfully cleaned up stale file
 			return false, 0, fmt.Errorf("removed stale PID file (process %d not found)", pid)
 		}
 		return false, 0, nil
 	}
 
-	// CRITICAL: Verify it's actually our daemon, not PID reuse
-	if !isGasTownDaemon(pid) {
-		// PID reused by different process
-		if err := os.Remove(pidFile); err == nil {
-			return false, 0, fmt.Errorf("removed stale PID file (PID %d is not gt daemon)", pid)
-		}
-		return false, 0, nil
-	}
-
 	return true, pid, nil
-}
-
-// isGasTownDaemon checks if a PID is actually a gt daemon run process.
-// This prevents false positives from PID reuse.
-// Uses ps command for cross-platform compatibility (Linux, macOS).
-func isGasTownDaemon(pid int) bool {
-	// Use ps to get command for the PID (works on Linux and macOS)
-	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=")
-	output, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-
-	cmdline := strings.TrimSpace(string(output))
-
-	// Check if it's "gt daemon run" or "/path/to/gt daemon run"
-	return strings.Contains(cmdline, "gt") && strings.Contains(cmdline, "daemon") && strings.Contains(cmdline, "run")
 }
 
 // StopDaemon stops the running daemon for the given town.
@@ -1622,10 +1583,10 @@ func StopDaemon(townRoot string) error {
 }
 
 // FindOrphanedDaemons finds all gt daemon run processes that aren't tracked by PID file.
-// Returns list of orphaned PIDs.
-func FindOrphanedDaemons() ([]int, error) {
-	// Use pgrep to find all "daemon run" processes (broad search, then verify with isGasTownDaemon)
-	cmd := exec.Command("pgrep", "-f", "daemon run")
+// Returns list of orphaned PIDs. The townRoot is used to check if a PID is tracked.
+func FindOrphanedDaemons(townRoot string) ([]int, error) {
+	// Use pgrep to find all "daemon run" processes (broad search)
+	cmd := exec.Command("pgrep", "-f", "gt.*daemon.*run")
 	output, err := cmd.Output()
 	if err != nil {
 		// Exit code 1 means no processes found - that's OK
@@ -1635,7 +1596,10 @@ func FindOrphanedDaemons() ([]int, error) {
 		return nil, fmt.Errorf("pgrep failed: %w", err)
 	}
 
-	// Parse PIDs
+	// Get the tracked daemon PID from PID file
+	trackedPID, _, _ := readPIDFile(filepath.Join(townRoot, "daemon", "daemon.pid"))
+
+	// Parse PIDs and filter out tracked ones
 	var pids []int
 	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
 		if line == "" {
@@ -1645,10 +1609,11 @@ func FindOrphanedDaemons() ([]int, error) {
 		if err != nil {
 			continue
 		}
-		// Verify it's actually gt daemon (filters out unrelated processes)
-		if isGasTownDaemon(pid) {
-			pids = append(pids, pid)
+		// Skip our own PID and the tracked daemon PID
+		if pid == os.Getpid() || pid == trackedPID {
+			continue
 		}
+		pids = append(pids, pid)
 	}
 
 	return pids, nil
@@ -1656,8 +1621,8 @@ func FindOrphanedDaemons() ([]int, error) {
 
 // KillOrphanedDaemons finds and kills any orphaned gt daemon processes.
 // Returns number of processes killed.
-func KillOrphanedDaemons() (int, error) {
-	pids, err := FindOrphanedDaemons()
+func KillOrphanedDaemons(townRoot string) (int, error) {
+	pids, err := FindOrphanedDaemons(townRoot)
 	if err != nil {
 		return 0, err
 	}
