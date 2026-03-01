@@ -16,8 +16,6 @@ const (
 	defaultWispMaxAge = 24 * time.Hour
 	// Closed wisps older than this are permanently deleted.
 	defaultWispDeleteAge = 7 * 24 * time.Hour
-	// Issues with no status change older than this are auto-closed.
-	defaultStaleIssueAge = 30 * 24 * time.Hour
 	// Alert threshold: if open wisp count exceeds this, escalate.
 	wispAlertThreshold = 500
 	// Closed mail (gt:message) older than this is permanently deleted.
@@ -39,9 +37,6 @@ type WispReaperConfig struct {
 
 	// DeleteAgeStr is how long after closing before wisps are deleted (e.g., "168h" for 7 days).
 	DeleteAgeStr string `json:"delete_age,omitempty"`
-
-	// StaleIssueAgeStr is how long an issue can be unchanged before auto-close (e.g., "720h" for 30 days).
-	StaleIssueAgeStr string `json:"stale_issue_age,omitempty"`
 
 	// Databases lists specific database names to reap.
 	// If empty, auto-discovers from dolt server.
@@ -84,18 +79,6 @@ func wispDeleteAge(config *DaemonPatrolConfig) time.Duration {
 	return defaultWispDeleteAge
 }
 
-// staleIssueAge returns the configured stale issue age, or the default (30 days).
-func staleIssueAge(config *DaemonPatrolConfig) time.Duration {
-	if config != nil && config.Patrols != nil && config.Patrols.WispReaper != nil {
-		if config.Patrols.WispReaper.StaleIssueAgeStr != "" {
-			if d, err := time.ParseDuration(config.Patrols.WispReaper.StaleIssueAgeStr); err == nil && d > 0 {
-				return d
-			}
-		}
-	}
-	return defaultStaleIssueAge
-}
-
 // reapWisps closes stale wisps and purges old closed wisps across all databases.
 // Tracks progress via mol-dog-reaper molecule lifecycle.
 // Non-fatal: errors are logged but don't stop the daemon.
@@ -119,8 +102,6 @@ func (d *Daemon) reapWisps() {
 
 	cutoff := time.Now().UTC().Add(-maxAge)
 	deleteCutoff := time.Now().UTC().Add(-deleteAge)
-	issueAge := staleIssueAge(d.patrolConfig)
-	issueCutoff := time.Now().UTC().Add(-issueAge)
 
 	databases := config.Databases
 	if len(databases) == 0 {
@@ -159,14 +140,6 @@ func (d *Daemon) reapWisps() {
 					dbName, reaped, maxAge, open)
 			}
 		}
-
-		// Auto-close stale issues (part of the reap phase).
-		closed, err := d.autoCloseStaleIssuesInDB(dbName, issueCutoff)
-		if err != nil {
-			d.logger.Printf("wisp_reaper: %s: auto-close issues error: %v", dbName, err)
-		} else if closed > 0 {
-			totalReaped += closed
-		}
 	}
 
 	if totalReaped > 0 {
@@ -179,8 +152,6 @@ func (d *Daemon) reapWisps() {
 	} else {
 		mol.closeStep("reap")
 	}
-
-	mol.closeStep("auto-close")
 
 	// --- PURGE STEP: delete closed wisps older than purge age ---
 
@@ -532,177 +503,6 @@ func (d *Daemon) purgeOldMailInDB(dbName string, mailCutoff time.Time) (int, err
 	}
 
 	return totalDeleted, nil
-}
-
-// autoCloseStaleIssuesInDB closes issues that have been open with no status change
-// for longer than the stale cutoff. Excludes:
-//   - P0 and P1 issues (priority <= 1)
-//   - Epics (issue_type = 'epic')
-//   - Issues with active dependencies (blocking or blocked-by open issues)
-//
-// Logs each closure individually with issue ID, title, age, and database.
-// Returns the number of issues auto-closed.
-func (d *Daemon) autoCloseStaleIssuesInDB(dbName string, staleCutoff time.Time) (int, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), wispReaperQueryTimeout)
-	defer cancel()
-
-	dsn := fmt.Sprintf("root@tcp(%s:%d)/%s?parseTime=true&timeout=5s&readTimeout=10s&writeTimeout=10s",
-		"127.0.0.1", d.doltServerPort(), dbName)
-
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		return 0, fmt.Errorf("open connection: %w", err)
-	}
-	defer db.Close()
-
-	// Check if issues table exists (not all databases have it).
-	var dummy int
-	checkQuery := fmt.Sprintf("SELECT 1 FROM `%s`.issues LIMIT 1", dbName) //nolint:gosec // G201: dbName is an internal Dolt database name
-	if err := db.QueryRowContext(ctx, checkQuery).Scan(&dummy); err != nil {
-		// Table doesn't exist or is empty — skip silently.
-		return 0, nil
-	}
-
-	// Disable auto-commit so all auto-closes produce a single Dolt commit.
-	if _, err := db.ExecContext(ctx, "SET @@autocommit = 0"); err != nil {
-		return 0, fmt.Errorf("disable autocommit: %w", err)
-	}
-	defer func() {
-		_, _ = db.ExecContext(context.Background(), "SET @@autocommit = 1")
-	}()
-
-	// Find stale issue candidates: open >30 days, priority > 1 (exempt P0/P1),
-	// not epics, and not linked to any open issues via dependencies.
-	// We SELECT first (instead of blind UPDATE) so we can log each closure individually.
-	candidateQuery := fmt.Sprintf( //nolint:gosec // G201: dbName is an internal Dolt database name
-		`SELECT id, title, updated_at FROM `+"`%s`"+`.issues
-		WHERE status IN ('open', 'in_progress')
-		AND updated_at < ?
-		AND priority > 1
-		AND issue_type != 'epic'
-		AND id NOT IN (
-			SELECT DISTINCT d.issue_id FROM `+"`%s`"+`.dependencies d
-			INNER JOIN `+"`%s`"+`.issues i ON d.depends_on_id = i.id
-			WHERE i.status IN ('open', 'in_progress')
-		)
-		AND id NOT IN (
-			SELECT DISTINCT d.depends_on_id FROM `+"`%s`"+`.dependencies d
-			INNER JOIN `+"`%s`"+`.issues i ON d.issue_id = i.id
-			WHERE i.status IN ('open', 'in_progress')
-		)`,
-		dbName, dbName, dbName, dbName, dbName)
-
-	rows, err := db.QueryContext(ctx, candidateQuery, staleCutoff)
-	if err != nil {
-		// Dependencies table might not exist — fall back to simpler query without dep check.
-		return d.autoCloseStaleIssuesSimple(ctx, db, dbName, staleCutoff)
-	}
-	defer rows.Close()
-
-	var candidates []struct {
-		id        string
-		title     string
-		updatedAt time.Time
-	}
-	for rows.Next() {
-		var c struct {
-			id        string
-			title     string
-			updatedAt time.Time
-		}
-		if err := rows.Scan(&c.id, &c.title, &c.updatedAt); err != nil {
-			return 0, fmt.Errorf("scan candidate: %w", err)
-		}
-		candidates = append(candidates, c)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("iterate candidates: %w", err)
-	}
-
-	if len(candidates) == 0 {
-		return 0, nil
-	}
-
-	// Close each candidate and log individually.
-	closed := 0
-	now := time.Now().UTC()
-	for _, c := range candidates {
-		closeQuery := fmt.Sprintf( //nolint:gosec // G201: dbName is an internal Dolt database name
-			"UPDATE `%s`.issues SET status='closed', closed_at=NOW(), close_reason='stale:auto-closed by reaper' WHERE id = ? AND status IN ('open', 'in_progress')",
-			dbName)
-		result, err := db.ExecContext(ctx, closeQuery, c.id)
-		if err != nil {
-			d.logger.Printf("wisp_reaper: %s: failed to auto-close %s: %v", dbName, c.id, err)
-			continue
-		}
-		affected, _ := result.RowsAffected()
-		if affected > 0 {
-			age := now.Sub(c.updatedAt).Truncate(time.Hour)
-			d.logger.Printf("wisp_reaper: %s: auto-closed %s %q (age: %v)", dbName, c.id, c.title, age)
-			closed++
-		}
-	}
-
-	// Commit all auto-closes as a single Dolt commit.
-	if closed > 0 {
-		commitMsg := fmt.Sprintf("reaper: auto-close %d stale issues in %s", closed, dbName)
-		if _, err := db.ExecContext(ctx, fmt.Sprintf("CALL DOLT_COMMIT('-Am', '%s')", commitMsg)); err != nil { //nolint:gosec // G201: commitMsg is constructed from safe values
-			d.logger.Printf("wisp_reaper: %s: dolt commit after auto-close failed: %v", dbName, err)
-		}
-	}
-
-	return closed, nil
-}
-
-// autoCloseStaleIssuesSimple is a fallback for databases without a dependencies table.
-// Closes stale issues excluding epics and P0/P1, but cannot check dependencies.
-func (d *Daemon) autoCloseStaleIssuesSimple(ctx context.Context, db *sql.DB, dbName string, staleCutoff time.Time) (int, error) {
-	// Find candidates without dependency check.
-	candidateQuery := fmt.Sprintf( //nolint:gosec // G201: dbName is an internal Dolt database name
-		"SELECT id, title, updated_at FROM `%s`.issues WHERE status IN ('open', 'in_progress') AND updated_at < ? AND priority > 1 AND issue_type != 'epic'",
-		dbName)
-
-	rows, err := db.QueryContext(ctx, candidateQuery, staleCutoff)
-	if err != nil {
-		return 0, fmt.Errorf("auto-close stale issues (simple): %w", err)
-	}
-	defer rows.Close()
-
-	closed := 0
-	now := time.Now().UTC()
-	for rows.Next() {
-		var id, title string
-		var updatedAt time.Time
-		if err := rows.Scan(&id, &title, &updatedAt); err != nil {
-			return closed, fmt.Errorf("scan candidate: %w", err)
-		}
-
-		closeQuery := fmt.Sprintf( //nolint:gosec // G201: dbName is an internal Dolt database name
-			"UPDATE `%s`.issues SET status='closed', closed_at=NOW(), close_reason='stale:auto-closed by reaper' WHERE id = ? AND status IN ('open', 'in_progress')",
-			dbName)
-		result, err := db.ExecContext(ctx, closeQuery, id)
-		if err != nil {
-			d.logger.Printf("wisp_reaper: %s: failed to auto-close %s: %v", dbName, id, err)
-			continue
-		}
-		affected, _ := result.RowsAffected()
-		if affected > 0 {
-			age := now.Sub(updatedAt).Truncate(time.Hour)
-			d.logger.Printf("wisp_reaper: %s: auto-closed %s %q (age: %v, no dep check)", dbName, id, title, age)
-			closed++
-		}
-	}
-
-	// Commit all auto-closes as a single Dolt commit.
-	// The caller (autoCloseStaleIssuesInDB) has already disabled auto-commit.
-	if closed > 0 {
-		commitMsg := fmt.Sprintf("reaper: auto-close %d stale issues in %s (no dep check)", closed, dbName)
-		if _, err := db.ExecContext(ctx, fmt.Sprintf("CALL DOLT_COMMIT('-Am', '%s')", commitMsg)); err != nil { //nolint:gosec // G201: commitMsg is constructed from safe values
-			d.logger.Printf("wisp_reaper: %s: dolt commit after auto-close (simple) failed: %v", dbName, err)
-		}
-	}
-
-	return closed, nil
 }
 
 // joinStrings joins strings with a separator. Simple helper to avoid importing strings.

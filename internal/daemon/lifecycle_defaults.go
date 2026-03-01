@@ -22,7 +22,6 @@ func DefaultLifecycleConfig() *DaemonPatrolConfig {
 				IntervalStr:      "30m",
 				MaxAgeStr:        "24h",
 				DeleteAgeStr:     "168h", // 7 days
-				StaleIssueAgeStr: "720h", // 30 days
 			},
 			CompactorDog: &CompactorDogConfig{
 				Enabled:     true,
