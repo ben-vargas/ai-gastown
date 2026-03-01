@@ -373,17 +373,6 @@ func runUp(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Check for cross-socket zombie sessions on the default socket.
-	// After the socket isolation fix (gt-qkekp), agent sessions created on the
-	// wrong socket may still be running. Warn the user so they can clean up.
-	warnCrossSocketZombies()
-
-	// Ensure keybindings (prefix+g, prefix+a) work on all tmux sockets.
-	// Agent sessions live on the town socket (e.g., -L gt), but the user may be
-	// attached to the default socket. Without this, prefix+g only works on the
-	// town socket where gt prime set it during session decoration.
-	ensureCrossSocketBindings()
-
 	// Log boot event for both JSON and text paths
 	if allOK {
 		startedServices := []string{"dolt", "daemon", "deacon", "mayor"}
@@ -896,30 +885,6 @@ func startPolecatsWithWork(townRoot, rigName string) ([]string, map[string]error
 	return started, errors
 }
 
-// ensureCrossSocketBindings sets GT keybindings on tmux sockets other than the
-// town socket. This allows prefix+g (agent menu) and prefix+a (feed) to work
-// when the user is attached to the default tmux server.
-//
-// The town socket's bindings are set by gt prime (during session decoration).
-// This function handles all other running tmux servers.
-func ensureCrossSocketBindings() {
-	townSocket := tmux.GetDefaultSocket()
-	if townSocket == "" {
-		return // no multi-socket isolation
-	}
-
-	// Always ensure bindings on the "default" socket since that's where
-	// users typically have their interactive terminal sessions.
-	// Pass townSocket so the binding embeds GT_TOWN_SOCKET=<name> in the
-	// run-shell command — gt agents menu needs it to locate the right tmux
-	// server when invoked from a non-town directory where InitRegistry is
-	// never called.
-	// EnsureBindingsOnSocket is idempotent and safe if default == town.
-	if townSocket != "default" {
-		_ = tmux.EnsureBindingsOnSocket("default", townSocket)
-	}
-}
-
 // doltReadyTimeout is how long gt up waits for the Dolt SQL server to accept
 // connections before proceeding with witness/refinery startup. 10 seconds is
 // generous: doltserver.Start() already retries for 5s, so this covers the case
@@ -936,36 +901,3 @@ func waitForDoltReady(townRoot string) {
 	}
 }
 
-// warnCrossSocketZombies checks for Gas Town agent sessions on the default tmux
-// socket when a separate town socket exists. These are leftovers from before the
-// socket isolation fix (gt-qkekp) and should be cleaned up.
-func warnCrossSocketZombies() {
-	townSocket := tmux.GetDefaultSocket()
-	if townSocket == "" || townSocket == "default" {
-		return // No cross-socket scenario
-	}
-
-	defaultTmux := tmux.NewTmuxWithSocket("default")
-	sessions, err := defaultTmux.ListSessions()
-	if err != nil {
-		return // No default socket server or error — nothing to warn about
-	}
-
-	var zombies []string
-	for _, sess := range sessions {
-		if sess != "" && session.IsKnownSession(sess) {
-			zombies = append(zombies, sess)
-		}
-	}
-
-	if len(zombies) == 0 {
-		return
-	}
-
-	fmt.Println()
-	fmt.Printf("%s Found %d agent session(s) on default socket (should be on %s socket)\n",
-		style.Bold.Render("⚠"), len(zombies), townSocket)
-	fmt.Printf("  These are zombie sessions from before socket isolation was fixed.\n")
-	fmt.Printf("  Clean up with: %s\n", style.Dim.Render("gt down --all  # or: gt doctor --fix"))
-	fmt.Println()
-}
