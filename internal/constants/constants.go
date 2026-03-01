@@ -69,6 +69,16 @@ const (
 	// Single source of truth — referenced by daemon lifecycle patrol,
 	// TUI feed stuck detection, and web fetcher worker status.
 	GUPPViolationTimeout = 30 * time.Minute
+
+	// HungSessionThreshold is how long a tmux session can be inactive (no output)
+	// before it's considered hung. Used by the daemon for witness/refinery sessions
+	// and by the witness for polecat sessions. Conservative: 30 minutes — normal
+	// agent operations produce frequent tmux output (tool calls, status updates).
+	//
+	// Single source of truth — referenced by daemon ensureWitness/RefineryRunning
+	// and witness DetectZombiePolecats. Overridable per-role via
+	// RoleHealthConfig.HungSessionThreshold.
+	HungSessionThreshold = 30 * time.Minute
 )
 
 // Directory names within a Gas Town workspace.

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/rig"
@@ -21,12 +22,9 @@ import (
 )
 
 // HungSessionThresholdMinutes is the number of minutes of tmux inactivity
-// after which a live agent session is considered hung. This catches agents
-// where the process is alive but has stopped producing output (infinite loop,
-// crashed mid-API-call, stuck waiting for something that will never arrive).
-// Conservative default: 30 minutes. Normal agent operations produce frequent
-// tmux output (tool calls, status updates). 30 minutes of silence is abnormal.
-const HungSessionThresholdMinutes = 30
+// after which a live agent session is considered hung. Derived from
+// constants.HungSessionThreshold (single source of truth).
+var HungSessionThresholdMinutes = int(constants.HungSessionThreshold.Minutes())
 
 // initRegistryFromWorkDir initializes the session prefix and agent registries
 // from a work directory. This ensures session.PrefixFor(rigName) returns the

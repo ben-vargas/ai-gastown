@@ -114,10 +114,9 @@ const (
 
 	// hungSessionThreshold is how long a refinery/witness session can be
 	// inactive (no tmux output) before the daemon considers it hung and
-	// kills it for restart. This catches sessions where Claude is alive
-	// (process exists) but not making progress (infinite loop, stuck API
-	// call, etc.). Conservative: 30 minutes. See: gt-tr3d
-	hungSessionThreshold = 30 * time.Minute
+	// kills it for restart. Derived from constants.HungSessionThreshold
+	// (single source of truth). See: gt-tr3d
+	hungSessionThreshold = constants.HungSessionThreshold
 
 	// doctorMolCooldown is the minimum interval between mol-dog-doctor molecules.
 	// Option B throttling: health checks run every 30s, but we only pour a
