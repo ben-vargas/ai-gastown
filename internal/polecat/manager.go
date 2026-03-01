@@ -893,6 +893,11 @@ func (m *Manager) RemoveWithOptions(name string, force, nuclear, selfNuke bool) 
 		}
 	}
 
+	// Unassign any work beads still pointing at this polecat (gt-e4u1).
+	// Without this, beads remain assigned to a ghost polecat (status in_progress,
+	// assignee set) after removal, permanently stuck with no one working on them.
+	m.unassignWorkBeads(name)
+
 	// Check if user's shell is cd'd into the worktree (prevents broken shell)
 	// This check runs unless selfNuke=true (polecat deleting its own worktree).
 	// When a polecat calls `gt done`, it's inside its worktree by design - the session
@@ -1756,6 +1761,41 @@ func (m *Manager) ClearIssue(name string) error {
 	}
 
 	return nil
+}
+
+// unassignWorkBeads finds all active work beads assigned to a polecat and resets them
+// to status=open with an empty assignee, so they can be picked up by another polecat.
+// This must be called during polecat removal to prevent orphaned beads (gt-e4u1).
+// Agent beads are skipped (handled separately by ResetAgentBeadForReuse).
+// Errors are logged as warnings but do not block removal.
+func (m *Manager) unassignWorkBeads(name string) {
+	assignee := m.assigneeID(name)
+	// Check all active work statuses that could leave orphaned beads
+	for _, status := range []string{"open", "in_progress", beads.StatusHooked} {
+		issues, err := m.beads.List(beads.ListOptions{
+			Status:   status,
+			Assignee: assignee,
+			Priority: -1,
+		})
+		if err != nil {
+			style.PrintWarning("could not list %s beads for %s: %v", status, name, err)
+			continue
+		}
+		for _, issue := range issues {
+			// Skip agent beads — handled by ResetAgentBeadForReuse
+			if beads.IsAgentBead(issue) {
+				continue
+			}
+			openStatus := "open"
+			empty := ""
+			if err := m.beads.Update(issue.ID, beads.UpdateOptions{
+				Status:   &openStatus,
+				Assignee: &empty,
+			}); err != nil {
+				style.PrintWarning("could not unassign bead %s from %s: %v", issue.ID, name, err)
+			}
+		}
+	}
 }
 
 // loadFromBeads gets polecat info from agent bead hook + beads assignee field + tmux session state.
