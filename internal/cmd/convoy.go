@@ -459,18 +459,13 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 	if owner == "" {
 		owner = detectSender()
 	}
-	if owner != "" {
-		description += fmt.Sprintf("\nOwner: %s", owner)
+	convoyFieldValues := &beads.ConvoyFields{
+		Owner:    owner,
+		Notify:   convoyNotify,
+		Merge:    convoyMerge,
+		Molecule: convoyMolecule,
 	}
-	if convoyNotify != "" {
-		description += fmt.Sprintf("\nNotify: %s", convoyNotify)
-	}
-	if convoyMerge != "" {
-		description += fmt.Sprintf("\nMerge: %s", convoyMerge)
-	}
-	if convoyMolecule != "" {
-		description += fmt.Sprintf("\nMolecule: %s", convoyMolecule)
-	}
+	description = beads.SetConvoyFields(&beads.Issue{Description: description}, convoyFieldValues)
 
 	// Guard against flag-like convoy names (gt-e0kx5)
 	if beads.IsFlagLikeTitle(name) {
@@ -1642,7 +1637,7 @@ func runConvoyStatus(cmd *cobra.Command, args []string) error {
 			Status:        convoy.Status,
 			Owned:         isOwned,
 			Lifecycle:     lifecycle,
-			MergeStrategy: parseConvoyMergeStrategy(convoy.Description),
+			MergeStrategy: convoyMergeFromFields(convoy.Description),
 			Tracked:       tracked,
 			Completed:     completed,
 			Total:         len(tracked),
@@ -1661,7 +1656,7 @@ func runConvoyStatus(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Printf("  Lifecycle: %s\n", "system-managed")
 	}
-	merge := parseConvoyMergeStrategy(convoy.Description)
+	merge := convoyMergeFromFields(convoy.Description)
 	if merge != "" {
 		fmt.Printf("  Merge:     %s\n", merge)
 	}
@@ -1935,16 +1930,15 @@ func hasLabel(labels []string, target string) bool { //nolint:unparam // target 
 	return false
 }
 
-// parseConvoyMergeStrategy extracts the merge strategy from a convoy description.
+// convoyMergeFromFields extracts the merge strategy from a convoy description
+// using the typed ConvoyFields accessor.
 // Returns the strategy string ("direct", "mr", "local") or empty string if not set.
-func parseConvoyMergeStrategy(description string) string {
-	for _, line := range strings.Split(description, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "Merge: ") {
-			return strings.TrimPrefix(line, "Merge: ")
-		}
+func convoyMergeFromFields(description string) string {
+	fields := beads.ParseConvoyFields(&beads.Issue{Description: description})
+	if fields == nil {
+		return ""
 	}
-	return ""
+	return fields.Merge
 }
 
 // formatYesNo returns "yes" or "no" for a boolean value.

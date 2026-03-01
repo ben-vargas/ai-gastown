@@ -263,6 +263,146 @@ func TestSetAttachmentFieldsPreservesConvoy(t *testing.T) {
 	}
 }
 
+// --- FormatConvoyFields / SetConvoyFields ---
+
+func TestFormatConvoyFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		fields *ConvoyFields
+		want   string
+	}{
+		{
+			name:   "nil fields",
+			fields: nil,
+			want:   "",
+		},
+		{
+			name:   "empty fields",
+			fields: &ConvoyFields{},
+			want:   "",
+		},
+		{
+			name:   "all fields",
+			fields: &ConvoyFields{Owner: "mayor/", Notify: "witness/", Merge: "direct", Molecule: "gt-wisp-abc"},
+			want:   "Owner: mayor/\nNotify: witness/\nMerge: direct\nMolecule: gt-wisp-abc",
+		},
+		{
+			name:   "only merge",
+			fields: &ConvoyFields{Merge: "mr"},
+			want:   "Merge: mr",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatConvoyFields(tt.fields)
+			if got != tt.want {
+				t.Errorf("FormatConvoyFields() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSetConvoyFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		issue  *Issue
+		fields *ConvoyFields
+		want   string
+	}{
+		{
+			name:   "nil issue",
+			issue:  nil,
+			fields: &ConvoyFields{Owner: "mayor/", Merge: "direct"},
+			want:   "Owner: mayor/\nMerge: direct",
+		},
+		{
+			name:   "preserves prose",
+			issue:  &Issue{Description: "Convoy tracking 3 issues"},
+			fields: &ConvoyFields{Owner: "mayor/", Merge: "mr"},
+			want:   "Convoy tracking 3 issues\nOwner: mayor/\nMerge: mr",
+		},
+		{
+			name:   "replaces existing fields",
+			issue:  &Issue{Description: "Convoy tracking 3 issues\nOwner: old/\nMerge: local"},
+			fields: &ConvoyFields{Owner: "mayor/", Merge: "direct"},
+			want:   "Convoy tracking 3 issues\nOwner: mayor/\nMerge: direct",
+		},
+		{
+			name:   "empty fields removes field lines",
+			issue:  &Issue{Description: "Convoy tracking 3 issues\nOwner: mayor/\nMerge: direct"},
+			fields: &ConvoyFields{},
+			want:   "Convoy tracking 3 issues",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SetConvoyFields(tt.issue, tt.fields)
+			if got != tt.want {
+				t.Errorf("SetConvoyFields() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConvoyFieldsParseFormatRoundTrip(t *testing.T) {
+	original := &ConvoyFields{
+		Owner:    "mayor/",
+		Notify:   "witness/",
+		Merge:    "direct",
+		Molecule: "gt-wisp-abc",
+	}
+	formatted := FormatConvoyFields(original)
+	parsed := ParseConvoyFields(&Issue{Description: formatted})
+	if parsed == nil {
+		t.Fatal("round-trip parse returned nil")
+	}
+	if parsed.Owner != original.Owner {
+		t.Errorf("Owner: got %q, want %q", parsed.Owner, original.Owner)
+	}
+	if parsed.Notify != original.Notify {
+		t.Errorf("Notify: got %q, want %q", parsed.Notify, original.Notify)
+	}
+	if parsed.Merge != original.Merge {
+		t.Errorf("Merge: got %q, want %q", parsed.Merge, original.Merge)
+	}
+	if parsed.Molecule != original.Molecule {
+		t.Errorf("Molecule: got %q, want %q", parsed.Molecule, original.Molecule)
+	}
+}
+
+func TestSetConvoyFieldsWithMixedContent(t *testing.T) {
+	issue := &Issue{Description: "Convoy tracking 3 issues\nOwner: old/\nSome prose line\nMerge: local\nAnother line"}
+	fields := &ConvoyFields{Owner: "new/", Merge: "direct", Molecule: "gt-mol-xyz"}
+	got := SetConvoyFields(issue, fields)
+
+	// Should preserve non-convoy prose
+	if !strings.Contains(got, "Some prose line") {
+		t.Errorf("lost prose line, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Another line") {
+		t.Errorf("lost another line, got:\n%s", got)
+	}
+	// Should have new fields
+	if !strings.Contains(got, "Owner: new/") {
+		t.Errorf("missing new Owner, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Merge: direct") {
+		t.Errorf("missing Merge, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Molecule: gt-mol-xyz") {
+		t.Errorf("missing Molecule, got:\n%s", got)
+	}
+	// Should NOT have old fields
+	if strings.Contains(got, "Owner: old/") {
+		t.Errorf("still has old Owner, got:\n%s", got)
+	}
+	if strings.Contains(got, "Merge: local") {
+		t.Errorf("still has old Merge, got:\n%s", got)
+	}
+}
+
 // --- ParseAgentFields (not covered in beads_test.go) ---
 
 func TestParseAgentFields_AllFields(t *testing.T) {
