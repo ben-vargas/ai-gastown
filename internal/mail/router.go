@@ -893,6 +893,23 @@ func (r *Router) validateRecipient(identity string) error {
 		return nil
 	}
 
+	// Well-known town-level singletons always valid
+	switch identity {
+	case "mayor", "mayor/", "deacon", "deacon/":
+		return nil
+	}
+
+	// Well-known rig-level singletons (rig/witness, rig/refinery) always
+	// valid — these agents are ephemeral and may not have an active session,
+	// but mail queues for the next session that starts.
+	parts := strings.SplitN(identity, "/", 3)
+	if len(parts) == 2 {
+		switch parts[1] {
+		case "witness", "refinery":
+			return nil
+		}
+	}
+
 	// Query agents from town-level beads
 	agents := r.queryAgents("")
 
