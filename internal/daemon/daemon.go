@@ -1561,22 +1561,6 @@ func isRunningFromPID(townRoot string) (bool, int, error) {
 	return true, pid, nil
 }
 
-// isGasTownDaemon checks if a PID is actually a gt daemon run process.
-// This prevents false positives from PID reuse.
-// Uses ps command for cross-platform compatibility (Linux, macOS).
-// Note: This remains for FindOrphanedDaemons which discovers unknown processes
-// where no lock file identity is available. IsRunning uses flock instead.
-func isGasTownDaemon(pid int) bool {
-	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=")
-	output, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-
-	cmdline := strings.TrimSpace(string(output))
-	return strings.Contains(cmdline, "gt") && strings.Contains(cmdline, "daemon") && strings.Contains(cmdline, "run")
-}
-
 // StopDaemon stops the running daemon for the given town.
 // Note: The file lock in Run() prevents multiple daemons per town, so we only
 // need to kill the process from the PID file.
@@ -1615,41 +1599,55 @@ func StopDaemon(townRoot string) error {
 	return nil
 }
 
-// FindOrphanedDaemons finds all gt daemon run processes that aren't tracked by PID file.
-// Returns list of orphaned PIDs. The townRoot is used to check if a PID is tracked.
+// FindOrphanedDaemons detects daemon processes not tracked by the PID file.
+// Uses flock on daemon.lock to detect running daemons without relying on
+// pgrep or ps string matching (ZFC fix: gt-utuk).
+//
+// With flock-based daemon management, only one daemon can hold the lock.
+// An "orphan" is detected when the lock is held but the PID file is stale
+// (process dead) or missing. Returns the stale PID if available.
 func FindOrphanedDaemons(townRoot string) ([]int, error) {
-	// Use pgrep to find all "daemon run" processes (broad search)
-	cmd := exec.Command("pgrep", "-f", "gt.*daemon.*run")
-	output, err := cmd.Output()
+	lockPath := filepath.Join(townRoot, "daemon", "daemon.lock")
+	if _, err := os.Stat(lockPath); os.IsNotExist(err) {
+		return nil, nil // No lock file — no daemon has ever run
+	}
+
+	lock := flock.New(lockPath)
+	locked, err := lock.TryLock()
 	if err != nil {
-		// Exit code 1 means no processes found - that's OK
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("pgrep failed: %w", err)
+		return nil, nil // Can't check lock — assume no orphans
 	}
 
-	// Get the tracked daemon PID from PID file
-	trackedPID, _, _ := readPIDFile(filepath.Join(townRoot, "daemon", "daemon.pid"))
-
-	// Parse PIDs and filter out tracked ones
-	var pids []int
-	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-		if line == "" {
-			continue
-		}
-		pid, err := strconv.Atoi(line)
-		if err != nil {
-			continue
-		}
-		// Skip our own PID and the tracked daemon PID
-		if pid == os.Getpid() || pid == trackedPID {
-			continue
-		}
-		pids = append(pids, pid)
+	if locked {
+		// We acquired the lock — no daemon holds it, no orphans possible
+		_ = lock.Unlock()
+		return nil, nil
 	}
 
-	return pids, nil
+	// Lock is held — a daemon is running. Check if it's tracked.
+	pidFile := filepath.Join(townRoot, "daemon", "daemon.pid")
+	trackedPID, _, err := readPIDFile(pidFile)
+	if err != nil {
+		// Lock held but no/invalid PID file — daemon is running but untracked.
+		// We can't determine its PID without ps/pgrep, so return empty.
+		// The caller (start.go) should use IsRunning() which handles this case.
+		return nil, nil
+	}
+
+	// Check if the tracked PID is actually alive
+	process, findErr := os.FindProcess(trackedPID)
+	if findErr != nil {
+		return nil, nil
+	}
+	if process.Signal(syscall.Signal(0)) != nil {
+		// PID file exists but process is dead — stale PID file with held lock.
+		// This shouldn't happen (lock should release on process death), but
+		// report the stale PID for cleanup.
+		return []int{trackedPID}, nil
+	}
+
+	// Lock held, PID alive, PID tracked — daemon is properly running, not orphaned.
+	return nil, nil
 }
 
 // KillOrphanedDaemons finds and kills any orphaned gt daemon processes.
