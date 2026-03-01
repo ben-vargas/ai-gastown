@@ -853,10 +853,10 @@ notifyWitness:
 		nudgeRefinery(rigName, "MERGE_READY received - check inbox for pending work")
 	}
 
-	// Write completion metadata to agent bead (gt-a6gp: nudge-over-mail).
-	// The witness survey-workers step reads these fields from the agent bead
-	// instead of parsing POLECAT_DONE mail. This eliminates Dolt commits
-	// from mail sends — the highest-volume mail source.
+	// Write completion metadata to agent bead for audit trail.
+	// Self-managed completion (gt-1qlg): metadata is retained for anomaly
+	// detection and crash recovery by witness patrol, but the witness no
+	// longer processes routine completions from these fields.
 	fmt.Printf("\nNotifying Witness...\n")
 	if agentBeadID != "" {
 		completionBd := beads.New(beads.ResolveBeadsDir(cwd))
@@ -873,8 +873,10 @@ notifyWitness:
 		}
 	}
 
-	// Nudge witness via tmux instead of mail (gt-a6gp).
-	// Nudges are free (no Dolt commit) and wake the witness immediately.
+	// Nudge witness via tmux (observability, not critical path).
+	// Self-managed completion (gt-1qlg): witness no longer processes routine completions.
+	// The nudge is kept for observability — witness logs the event but doesn't
+	// need to act on it. Nudges are free (no Dolt commit).
 	nudgeWitness(rigName, fmt.Sprintf("POLECAT_DONE %s exit=%s", polecatName, exitType))
 	fmt.Printf("%s Witness notified of %s (via nudge)\n", style.Bold.Render("✓"), exitType)
 
@@ -1210,13 +1212,13 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, _ string) { // issueID unus
 		fmt.Fprintf(os.Stderr, "Warning: couldn't clear agent %s hook: %v\n", agentBeadID, err)
 	}
 
-	// Set agent state to "done" (gt-a6gp: nudge-over-mail).
-	// Completion metadata (exit_type, MR ID, branch) was already written to
-	// the agent bead by the notifyWitness section. Setting agent_state=done
-	// signals the witness survey-workers step to process completion from beads.
-	// The witness transitions the polecat to "idle" after processing.
+	// Self-managed completion (gt-1qlg, polecat-self-managed-completion.md Phase 2):
+	// Polecat sets agent_state=idle directly, skipping the intermediate "done" state.
+	// The witness is no longer in the critical path for routine completions.
+	// Completion metadata (exit_type, MR ID, branch) remains on the agent bead
+	// for audit purposes and anomaly detection by witness patrol.
 	// Exception: ESCALATED exits use "stuck" — the polecat needs help.
-	doneState := "done"
+	doneState := "idle"
 	if exitType == ExitEscalated {
 		doneState = "stuck"
 	}

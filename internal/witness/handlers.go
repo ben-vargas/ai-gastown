@@ -140,9 +140,10 @@ func HandlePolecatDone(workDir, rigName string, msg *mail.Message, router *mail.
 // this reads completion metadata directly from the agent bead's description fields
 // (exit_type, mr_id, branch, mr_failed, completion_time).
 //
-// Called by the witness survey-workers step when it detects agent_state=done on a
-// polecat's agent bead. After processing, the witness should transition the polecat
-// to agent_state=idle.
+// Self-managed completion (gt-1qlg): Polecats now set agent_state=idle directly,
+// so the witness rarely sees agent_state=done. This function is retained as a
+// safety net for crash recovery — if a polecat crashes between setting completion
+// metadata and transitioning to idle, the witness can process the completion.
 //
 // The processing logic is identical to HandlePolecatDone: pending MR triggers
 // cleanup wisp + MERGE_READY; no MR means simple acknowledgment.
@@ -189,8 +190,10 @@ func HandlePolecatDoneFromBead(workDir, rigName, polecatName string, fields *bea
 }
 
 // TransitionPolecatToIdle sets a polecat's agent_state to idle after the witness
-// has processed its completion (gt-a6gp). This completes the done→idle transition
-// that was previously handled by updateAgentStateOnDone in gt done.
+// has processed its completion (gt-a6gp). With self-managed completion (gt-1qlg),
+// polecats transition to idle directly — this function is now a safety net for
+// crash recovery where the polecat set completion metadata but didn't reach
+// the idle transition.
 func TransitionPolecatToIdle(workDir, agentBeadID string) error {
 	bd := beads.New(beads.ResolveBeadsDir(workDir))
 	return bd.UpdateAgentState(agentBeadID, string(AgentStateIdle), nil)
@@ -1514,8 +1517,10 @@ type DiscoverCompletionsResult struct {
 }
 
 // DiscoverCompletions scans all polecat agent beads for completion metadata
-// written by gt done. This is the PRIMARY mechanism for discovering polecat
-// state transitions, replacing the mail-based POLECAT_DONE flow (gt-w0br).
+// written by gt done. With self-managed completion (gt-1qlg), this is now a
+// SAFETY NET — polecats transition to idle directly and nudge refinery themselves.
+// This function catches crash recovery cases where a polecat wrote completion
+// metadata but crashed before transitioning to idle.
 //
 // For each polecat with completion metadata (exit_type + completion_time set):
 //   - PHASE_COMPLETE: acknowledge (polecat recycled, awaiting gate)
