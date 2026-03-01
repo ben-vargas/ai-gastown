@@ -1540,6 +1540,40 @@ func (t *Tmux) AcceptBypassPermissionsWarning(session string) error {
 	return nil
 }
 
+// DismissStartupDialogsBlind sends the key sequences needed to dismiss all
+// known Claude Code startup dialogs without screen-scraping pane content.
+// This avoids coupling to third-party TUI strings that can change with any update.
+//
+// The sequence handles (in order):
+//  1. Workspace trust dialog — Enter (option 1 "Yes, I trust this folder" is pre-selected)
+//  2. Bypass permissions warning — Down+Enter (select "Yes, I accept" then confirm)
+//
+// Safe to call on sessions where no dialog is showing: Enter sends a blank input
+// to an idle Claude prompt (harmless for a stalled session), and Down+Enter either
+// does nothing or sends another blank input.
+//
+// This is intended for remediation of stalled sessions detected via structured
+// signals (session age + activity). For startup-time dialog handling where
+// precision matters, use AcceptStartupDialogs instead.
+func (t *Tmux) DismissStartupDialogsBlind(session string) error {
+	// Step 1: Send Enter to dismiss trust dialog (if present)
+	if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
+		return fmt.Errorf("sending Enter for trust dialog: %w", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	// Step 2: Send Down+Enter to dismiss bypass permissions dialog (if present)
+	if _, err := t.run("send-keys", "-t", session, "Down"); err != nil {
+		return fmt.Errorf("sending Down for bypass dialog: %w", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if _, err := t.run("send-keys", "-t", session, "Enter"); err != nil {
+		return fmt.Errorf("sending Enter for bypass dialog: %w", err)
+	}
+
+	return nil
+}
+
 // GetPaneCommand returns the current command running in a pane.
 // Returns "bash", "zsh", "claude", "node", etc.
 func (t *Tmux) GetPaneCommand(session string) (string, error) {

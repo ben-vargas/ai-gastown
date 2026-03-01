@@ -1273,9 +1273,10 @@ type DetectStalledPolecatsResult struct {
 //   - It is older than StartupStallThreshold (90s)
 //   - Its last tmux activity is older than StartupActivityGrace (60s)
 //
-// When a startup stall is detected, AcceptStartupDialogs is called to dismiss
-// any known blocking dialogs (workspace trust, bypass permissions). This is
-// idempotent: calling it on a non-stalled session is harmless.
+// When a startup stall is detected, DismissStartupDialogsBlind is called to
+// send blind key sequences that dismiss known blocking dialogs (workspace trust,
+// bypass permissions) without screen-scraping pane content. This avoids coupling
+// to third-party TUI strings that can change with any Claude Code update.
 func DetectStalledPolecats(workDir, rigName string) *DetectStalledPolecatsResult {
 	result := &DetectStalledPolecatsResult{}
 
@@ -1344,14 +1345,15 @@ func DetectStalledPolecats(workDir, rigName string) *DetectStalledPolecatsResult
 		}
 
 		// Session is old enough and has no recent activity: startup stall.
-		// Attempt to dismiss any known startup dialogs (idempotent).
+		// Send blind key sequences to dismiss any startup dialogs without
+		// screen-scraping pane content (avoids coupling to third-party TUI strings).
 		stalled := StalledResult{
 			PolecatName: polecatName,
 			StallType:   "startup-stall",
 		}
-		if err := t.AcceptStartupDialogs(sessionName); err != nil {
+		if err := t.DismissStartupDialogsBlind(sessionName); err != nil {
 			stalled.Action = "escalated"
-			stalled.Error = fmt.Errorf("auto-dismiss failed: %w", err)
+			stalled.Error = fmt.Errorf("blind dismiss failed: %w", err)
 		} else {
 			stalled.Action = "auto-dismissed"
 		}

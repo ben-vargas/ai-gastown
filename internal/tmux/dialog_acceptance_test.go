@@ -176,3 +176,42 @@ func TestContainsPromptIndicator(t *testing.T) {
 		})
 	}
 }
+
+// TestDismissStartupDialogsBlind_SendsKeys verifies that the blind dismiss
+// sends keys without error on a valid session (no screen-scraping).
+func TestDismissStartupDialogsBlind_SendsKeys(t *testing.T) {
+	tm := newTestTmux(t)
+	sessionName := "gt-test-blind-dismiss-" + t.Name()
+
+	_ = tm.KillSession(sessionName)
+	if err := tm.NewSession(sessionName, ""); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	// Should complete quickly — no polling, no CapturePane
+	start := time.Now()
+	err := tm.DismissStartupDialogsBlind(sessionName)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("DismissStartupDialogsBlind: %v", err)
+	}
+
+	// Should take ~700ms (500ms + 200ms sleeps) — not the 8s+ dialog poll timeout
+	if elapsed > 3*time.Second {
+		t.Errorf("took %v, expected ~700ms (no polling)", elapsed)
+	}
+}
+
+// TestDismissStartupDialogsBlind_InvalidSession verifies error handling
+// when the session doesn't exist.
+func TestDismissStartupDialogsBlind_InvalidSession(t *testing.T) {
+	tm := newTestTmux(t)
+
+	err := tm.DismissStartupDialogsBlind("gt-nonexistent-session-blind-xyz")
+	// Should return an error since the session doesn't exist
+	if err == nil {
+		t.Error("expected error for nonexistent session, got nil")
+	}
+}
