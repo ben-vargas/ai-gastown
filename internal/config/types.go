@@ -301,6 +301,15 @@ type DaemonThresholds struct {
 
 	// DoctorMolCooldown is min interval between mol-dog-doctor molecules (default "5m").
 	DoctorMolCooldown string `json:"doctor_mol_cooldown,omitempty"`
+
+	// RecoveryHeartbeatInterval is the fixed interval for recovery-focused daemon heartbeat (default "3m").
+	RecoveryHeartbeatInterval string `json:"recovery_heartbeat_interval,omitempty"`
+
+	// BootSpawnCooldown prevents Boot from spawning on every daemon heartbeat (default "2m").
+	BootSpawnCooldown string `json:"boot_spawn_cooldown,omitempty"`
+
+	// DeaconGracePeriod is time to wait after starting Deacon before checking heartbeat (default "5m").
+	DeaconGracePeriod string `json:"deacon_grace_period,omitempty"`
 }
 
 // DeaconThresholds configures deacon health-check and dispatch thresholds.

@@ -305,10 +305,10 @@ func (d *Daemon) Run() error {
 
 	// Fixed recovery-focused heartbeat (no activity-based backoff)
 	// Normal wake is handled by feed subscription (bd activity --follow)
-	timer := time.NewTimer(recoveryHeartbeatInterval)
+	timer := time.NewTimer(d.recoveryHeartbeatInterval())
 	defer timer.Stop()
 
-	d.logger.Printf("Daemon running, recovery heartbeat interval %v", recoveryHeartbeatInterval)
+	d.logger.Printf("Daemon running, recovery heartbeat interval %v", d.recoveryHeartbeatInterval())
 
 	// Start feed curator goroutine
 	d.curator = feed.NewCurator(d.config.TownRoot)
@@ -552,16 +552,18 @@ func (d *Daemon) Run() error {
 			d.heartbeat(state)
 
 			// Fixed recovery interval (no activity-based backoff)
-			timer.Reset(recoveryHeartbeatInterval)
+			timer.Reset(d.recoveryHeartbeatInterval())
 		}
 	}
 }
 
-// recoveryHeartbeatInterval is the fixed interval for recovery-focused daemon.
+// recoveryHeartbeatInterval returns the config-driven recovery heartbeat interval.
 // Normal wake is handled by feed subscription (bd activity --follow).
 // The daemon is a safety net for dead sessions, GUPP violations, and orphaned work.
-// 3 minutes is fast enough to detect stuck agents promptly while avoiding excessive overhead.
-const recoveryHeartbeatInterval = 3 * time.Minute
+// Default: 3 minutes — fast enough to detect stuck agents promptly.
+func (d *Daemon) recoveryHeartbeatInterval() time.Duration {
+	return d.loadOperationalConfig().GetDaemonConfig().RecoveryHeartbeatIntervalD()
+}
 
 // heartbeat performs one heartbeat cycle.
 // The daemon is recovery-focused: it ensures agents are running and detects failures.
@@ -816,15 +818,17 @@ func (d *Daemon) getDeaconSessionName() string {
 // Boot is a fresh-each-tick watchdog that decides whether to start/wake/nudge
 // the Deacon, centralizing the "when to wake" decision in an agent.
 // In degraded mode (no tmux), falls back to mechanical checks.
-// bootSpawnCooldown prevents Boot from spawning on every daemon heartbeat.
+// bootSpawnCooldown returns the config-driven boot spawn cooldown.
 // Boot triage runs are expensive (AI reasoning); if one just ran, skip.
-const bootSpawnCooldown = 2 * time.Minute
+func (d *Daemon) bootSpawnCooldown() time.Duration {
+	return d.loadOperationalConfig().GetDaemonConfig().BootSpawnCooldownD()
+}
 
 func (d *Daemon) ensureBootRunning() {
 	// Cooldown gate: skip if Boot was spawned recently (fixes #2084)
-	if !d.bootLastSpawned.IsZero() && time.Since(d.bootLastSpawned) < bootSpawnCooldown {
+	if !d.bootLastSpawned.IsZero() && time.Since(d.bootLastSpawned) < d.bootSpawnCooldown() {
 		d.logger.Printf("Boot spawned %s ago, within cooldown (%s), skipping",
-			time.Since(d.bootLastSpawned).Round(time.Second), bootSpawnCooldown)
+			time.Since(d.bootLastSpawned).Round(time.Second), d.bootSpawnCooldown())
 		return
 	}
 
@@ -930,10 +934,12 @@ func (d *Daemon) ensureDeaconRunning() {
 	d.logger.Println("Deacon started successfully")
 }
 
-// deaconGracePeriod is the time to wait after starting a Deacon before checking heartbeat.
+// deaconGracePeriod returns the config-driven deacon grace period.
 // The Deacon needs time to initialize Claude, run SessionStart hooks, execute gt prime,
-// run a patrol cycle, and write a fresh heartbeat. 5 minutes is conservative.
-const deaconGracePeriod = 5 * time.Minute
+// run a patrol cycle, and write a fresh heartbeat. Default: 5 minutes.
+func (d *Daemon) deaconGracePeriod() time.Duration {
+	return d.loadOperationalConfig().GetDaemonConfig().DeaconGracePeriodD()
+}
 
 // checkDeaconHeartbeat checks if the Deacon is making progress.
 // This is a belt-and-suspenders fallback in case Boot doesn't detect stuck states.
@@ -964,7 +970,7 @@ func (d *Daemon) checkDeaconHeartbeat() {
 
 		if hb == nil {
 			// No heartbeat file exists
-			if timeSinceStart < deaconGracePeriod {
+			if timeSinceStart < d.deaconGracePeriod() {
 				d.logger.Printf("Deacon started %s ago, awaiting first heartbeat...",
 					timeSinceStart.Round(time.Second))
 				return
@@ -979,7 +985,7 @@ func (d *Daemon) checkDeaconHeartbeat() {
 		// Heartbeat exists - check if it's from BEFORE we started this Deacon
 		if hb.Timestamp.Before(d.deaconLastStarted) {
 			// Heartbeat is stale (from before restart)
-			if timeSinceStart < deaconGracePeriod {
+			if timeSinceStart < d.deaconGracePeriod() {
 				d.logger.Printf("Deacon started %s ago, heartbeat is pre-restart, awaiting fresh heartbeat...",
 					timeSinceStart.Round(time.Second))
 				return
