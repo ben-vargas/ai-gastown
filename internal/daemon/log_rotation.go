@@ -143,7 +143,7 @@ func copyTruncateRotate(logPath string) error {
 			os.Remove(old)
 		} else {
 			next := fmt.Sprintf("%s.%d.gz", logPath, i+1)
-			os.Rename(old, next)
+			_ = os.Rename(old, next)
 		}
 	}
 
@@ -179,9 +179,11 @@ func compressFile(src, dst string) error {
 	defer out.Close()
 
 	gz := gzip.NewWriter(out)
-	defer gz.Close()
 
 	_, err = io.Copy(gz, in)
+	if closeErr := gz.Close(); closeErr != nil && err == nil {
+		err = closeErr
+	}
 	return err
 }
 

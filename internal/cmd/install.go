@@ -1,9 +1,9 @@
 package cmd
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/steveyegge/gastown/internal/cli"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,7 +11,9 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/cli"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
@@ -166,6 +168,19 @@ func runInstall(cmd *cobra.Command, args []string) error {
 				}
 			}
 			if err := doltserver.CheckPortAvailable(port); err != nil {
+				// Port is in use — but if a Dolt server is already running
+				// on it, we can reuse it instead of starting a new one.
+				dsn := fmt.Sprintf("root:@tcp(127.0.0.1:%d)/", port)
+				if db, connErr := sql.Open("mysql", dsn); connErr == nil {
+					if pingErr := db.Ping(); pingErr == nil {
+						db.Close()
+						// Usable Dolt server on this port — skip the check.
+						fmt.Printf("   %s Using existing Dolt server on port %d\n",
+							style.Dim.Render("ℹ"), port)
+						goto portOK
+					}
+					db.Close()
+				}
 				pid, dataDir := doltserver.PortHolder(port)
 				msg := fmt.Sprintf("Dolt port %d is already in use", port)
 				if pid > 0 && dataDir != "" {
@@ -182,6 +197,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 				}
 				return fmt.Errorf("%s", msg)
 			}
+		portOK:
 		}
 	}
 

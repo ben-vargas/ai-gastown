@@ -444,7 +444,7 @@ func (m *ConvoyManager) closeEmptyConvoy(convoyID string) {
 
 // runStartupSweep runs one convoy check pass after a brief delay to catch
 // convoys that completed while the daemon was stopped or Dolt was unavailable.
-// It waits 10 seconds so Dolt has time to stabilise before the first query.
+// It waits 10 seconds so Dolt has time to stabilize before the first query.
 // This goroutine is not tracked in wg because it is short-lived (exits after
 // a single scan) and does not need to participate in the Stop() shutdown.
 func (m *ConvoyManager) runStartupSweep() {
