@@ -327,6 +327,9 @@ func (m *Mailbox) getFromDir(id, beadsDir string) (*Message, error) {
 	}
 
 	// bd show --json returns an array
+	if !isJSON(stdout) {
+		return nil, ErrMessageNotFound
+	}
 	var bms []BeadsMessage
 	if err := json.Unmarshal(stdout, &bms); err != nil {
 		return nil, err
@@ -1023,11 +1026,11 @@ func (m *Mailbox) listByThreadBeads(threadID string) ([]*Message, error) {
 		return nil, err
 	}
 
+	if !isJSON(stdout) {
+		return nil, nil
+	}
 	var beadsMsgs []BeadsMessage
 	if err := json.Unmarshal(stdout, &beadsMsgs); err != nil {
-		if len(stdout) == 0 || string(stdout) == "null" {
-			return nil, nil
-		}
 		return nil, err
 	}
 
