@@ -1026,6 +1026,8 @@ func sessionWorkDir(sessionName, townRoot string) (string, error) {
 			return fmt.Sprintf("%s/%s/refinery/rig", townRoot, identity.Rig), nil
 		case session.RolePolecat:
 			return fmt.Sprintf("%s/%s/polecats/%s", townRoot, identity.Rig, identity.Name), nil
+		case session.RoleDog:
+			return fmt.Sprintf("%s/deacon/dogs/%s", townRoot, identity.Name), nil
 		default:
 			return "", fmt.Errorf("unknown session type: %s (role %s, try specifying role explicitly)", sessionName, identity.Role)
 		}

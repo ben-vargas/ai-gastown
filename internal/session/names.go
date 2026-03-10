@@ -59,3 +59,10 @@ func OverseerSessionName() string {
 func BootSessionName() string {
 	return HQPrefix + "boot"
 }
+
+// DogSessionName returns the session name for a named dog agent.
+// Dogs are town-level (managed by deacon), so they use the hq- prefix.
+// Pattern: hq-dog-<name> (e.g., hq-dog-alpha).
+func DogSessionName(name string) string {
+	return fmt.Sprintf("%sdog-%s", HQPrefix, name)
+}

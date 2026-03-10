@@ -17,13 +17,14 @@ const (
 	RoleRefinery Role = "refinery"
 	RoleCrew     Role = "crew"
 	RolePolecat  Role = "polecat"
+	RoleDog      Role = "dog"
 )
 
 // AgentIdentity represents a parsed Gas Town agent identity.
 type AgentIdentity struct {
-	Role   Role   // mayor, deacon, witness, refinery, crew, polecat
-	Rig    string // rig name (empty for mayor/deacon)
-	Name   string // crew/polecat name (empty for mayor/deacon/witness/refinery)
+	Role   Role   // mayor, deacon, witness, refinery, crew, polecat, dog
+	Rig    string // rig name (empty for mayor/deacon/dog)
+	Name   string // crew/polecat/dog name (empty for mayor/deacon/witness/refinery)
 	Prefix string // beads prefix for rig-level agents (e.g., "gt", "bd", "hop")
 }
 
@@ -120,6 +121,14 @@ func ParseSessionNameWithRegistry(session string, registry *PrefixRegistry) (*Ag
 		case "overseer":
 			return &AgentIdentity{Role: RoleOverseer}, nil
 		default:
+			// Dogs: hq-dog-<name>
+			if strings.HasPrefix(suffix, "dog-") {
+				name := suffix[4:] // len("dog-") = 4
+				if name == "" {
+					return nil, fmt.Errorf("invalid session name %q: empty dog name", session)
+				}
+				return &AgentIdentity{Role: RoleDog, Name: name}, nil
+			}
 			return nil, fmt.Errorf("invalid session name %q: unknown hq- role", session)
 		}
 	}
@@ -180,6 +189,8 @@ func (a *AgentIdentity) SessionName() string {
 		return CrewSessionName(a.prefix(), a.Name)
 	case RolePolecat:
 		return PolecatSessionName(a.prefix(), a.Name)
+	case RoleDog:
+		return DogSessionName(a.Name)
 	default:
 		return ""
 	}
@@ -221,6 +232,8 @@ func (a *AgentIdentity) BeaconAddress() string {
 		return BeaconRecipient("crew", a.Name, a.Rig)
 	case RolePolecat:
 		return BeaconRecipient("polecat", a.Name, a.Rig)
+	case RoleDog:
+		return BeaconRecipient("dog", a.Name, "")
 	default:
 		return ""
 	}
@@ -250,6 +263,8 @@ func (a *AgentIdentity) Address() string {
 		return fmt.Sprintf("%s/crew/%s", a.Rig, a.Name)
 	case RolePolecat:
 		return fmt.Sprintf("%s/polecats/%s", a.Rig, a.Name)
+	case RoleDog:
+		return fmt.Sprintf("deacon/dogs/%s", a.Name)
 	default:
 		return ""
 	}
