@@ -239,7 +239,16 @@ func detectSessionState(ctx RoleContext) SessionState {
 	// Fallback: query hooked/in_progress beads by assignee.
 	agentID := getAgentIdentity(ctx)
 	if agentID != "" {
-		b := beads.New(ctx.WorkDir)
+		// Use rig beads directory, not polecat worktree. Polecats don't have their
+		// own .beads — the rig's beads dir is the authoritative source. (GH#2503)
+		beadsDir := ctx.WorkDir
+		if ctx.Rig != "" && ctx.TownRoot != "" {
+			rigDir := filepath.Join(ctx.TownRoot, ctx.Rig)
+			if _, err := os.Stat(filepath.Join(rigDir, ".beads")); err == nil {
+				beadsDir = rigDir
+			}
+		}
+		b := beads.New(beadsDir)
 		// Primary: agent bead's hook_bead field (authoritative, set by bd slot set during sling)
 		agentBeadID := buildAgentBeadID(agentID, ctx.Role, ctx.TownRoot)
 		if agentBeadID != "" {
