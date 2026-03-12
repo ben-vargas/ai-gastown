@@ -1603,7 +1603,8 @@ func (r *Router) notifyRecipient(msg *Message) error {
 			return r.tmux.SendNotificationBanner(sessionID, msg.From, msg.Subject)
 		}
 
-		notification := fmt.Sprintf("📬 You have new mail from %s. Subject: %s. Run 'gt mail inbox' to read.", msg.From, msg.Subject)
+		notification := formatNotificationMessage(msg)
+		priority := nudgePriorityForMailPriority(msg.Priority)
 
 		// Wait-idle-first delivery: try direct nudge if the agent is idle,
 		// fall back to cooperative queue if busy. WaitForIdle requires 2
@@ -1629,8 +1630,9 @@ func (r *Router) notifyRecipient(msg *Message) error {
 			// Timeout (agent busy) — queue for cooperative delivery
 			// at the next turn boundary.
 			if err := nudge.Enqueue(r.townRoot, sessionID, nudge.QueuedNudge{
-				Sender:  msg.From,
-				Message: notification,
+				Sender:   msg.From,
+				Message:  notification,
+				Priority: priority,
 			}); err != nil {
 				return err
 			}
@@ -1647,14 +1649,44 @@ func (r *Router) notifyRecipient(msg *Message) error {
 	// No tmux session found - enqueue nudge for ACP/propeller delivery
 	// This handles headless ACP mode where there's no tmux session
 	if r.townRoot != "" && len(sessionIDs) > 0 {
-		notification := fmt.Sprintf("📬 You have new mail from %s. Subject: %s. Run 'gt mail inbox' to read.", msg.From, msg.Subject)
+		notification := formatNotificationMessage(msg)
 		return nudge.Enqueue(r.townRoot, sessionIDs[0], nudge.QueuedNudge{
-			Sender:  msg.From,
-			Message: notification,
+			Sender:   msg.From,
+			Message:  notification,
+			Priority: nudgePriorityForMailPriority(msg.Priority),
 		})
 	}
 
 	return nil // No active session found
+}
+
+func nudgePriorityForMailPriority(priority Priority) string {
+	switch priority {
+	case PriorityUrgent, PriorityHigh:
+		return nudge.PriorityUrgent
+	default:
+		return nudge.PriorityNormal
+	}
+}
+
+func formatNotificationMessage(msg *Message) string {
+	if msg.Type == TypeEscalation {
+		return fmt.Sprintf("🚨 Escalation mail from %s. ID: %s. Severity: %s. Subject: %s. Run 'gt mail read %s' or 'gt escalate ack %s'.", msg.From, msg.ThreadID, prioritySeverityLabel(msg.Priority), msg.Subject, msg.ThreadID, msg.ThreadID)
+	}
+	return fmt.Sprintf("📬 You have new mail from %s. Subject: %s. Run 'gt mail inbox' to read.", msg.From, msg.Subject)
+}
+
+func prioritySeverityLabel(priority Priority) string {
+	switch priority {
+	case PriorityUrgent:
+		return "critical"
+	case PriorityHigh:
+		return "high"
+	case PriorityLow:
+		return "low"
+	default:
+		return "medium"
+	}
 }
 
 // enqueueReplyReminder queues a deferred nudge reminding the recipient to reply

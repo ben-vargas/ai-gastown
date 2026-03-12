@@ -1612,11 +1612,79 @@ func TestNotifyRecipient_BusyAgent(t *testing.T) {
 	if len(nudges) != 1 {
 		t.Errorf("expected 1 immediately-deliverable nudge, got %d", len(nudges))
 	}
+	if nudges[0].Priority != nudge.PriorityNormal {
+		t.Errorf("queued mail notification priority = %q, want %q", nudges[0].Priority, nudge.PriorityNormal)
+	}
 
 	// The reply-reminder should still be in queue (deferred).
 	remaining, _ := nudge.Pending(townRoot, sessionName)
 	if remaining != 1 {
 		t.Errorf("expected 1 deferred reply-reminder still in queue, got %d", remaining)
+	}
+}
+
+func TestNotifyRecipient_BusyAgentEscalationUsesUrgentQueuedNudge(t *testing.T) {
+	socket := requireNotifyTestSocket(t)
+	sessionName := "gt-crew-busy-escalation"
+	createNotifyTestSession(t, socket, sessionName, "sleep 300")
+
+	townRoot := t.TempDir()
+	r := &Router{
+		workDir:           t.TempDir(),
+		townRoot:          townRoot,
+		tmux:              tmux.NewTmuxWithSocket(socket),
+		IdleNotifyTimeout: 1 * time.Second,
+	}
+
+	msg := &Message{
+		From:     "gastown/witness",
+		To:       "gastown/crew/busy-escalation",
+		Subject:  "[CRITICAL] Database identity mismatch",
+		Type:     TypeEscalation,
+		Priority: PriorityUrgent,
+		ThreadID: "hq-esc123",
+	}
+
+	if err := r.notifyRecipient(msg); err != nil {
+		t.Fatalf("notifyRecipient returned error: %v", err)
+	}
+
+	nudges, err := nudge.Drain(townRoot, sessionName)
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(nudges) != 1 {
+		t.Fatalf("expected 1 immediately-deliverable escalation nudge, got %d", len(nudges))
+	}
+	if nudges[0].Priority != nudge.PriorityUrgent {
+		t.Fatalf("queued escalation priority = %q, want %q", nudges[0].Priority, nudge.PriorityUrgent)
+	}
+	for _, want := range []string{"Escalation mail from gastown/witness", "ID: hq-esc123", "Severity: critical", "gt mail read hq-esc123", "gt escalate ack hq-esc123"} {
+		if !strings.Contains(nudges[0].Message, want) {
+			t.Fatalf("queued escalation message missing %q: %s", want, nudges[0].Message)
+		}
+	}
+
+	remaining, _ := nudge.Pending(townRoot, sessionName)
+	if remaining != 1 {
+		t.Fatalf("expected 1 deferred reply-reminder after draining escalation nudge, got %d", remaining)
+	}
+}
+
+func TestFormatNotificationMessageForEscalation(t *testing.T) {
+	msg := &Message{
+		From:     "gastown/witness",
+		Subject:  "[HIGH] Polecat stuck",
+		Type:     TypeEscalation,
+		Priority: PriorityHigh,
+		ThreadID: "hq-esc456",
+	}
+
+	notification := formatNotificationMessage(msg)
+	for _, want := range []string{"Escalation mail from gastown/witness", "ID: hq-esc456", "Severity: high", "gt mail read hq-esc456", "gt escalate ack hq-esc456"} {
+		if !strings.Contains(notification, want) {
+			t.Fatalf("escalation notification missing %q: %s", want, notification)
+		}
 	}
 }
 
