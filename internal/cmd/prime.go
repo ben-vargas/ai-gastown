@@ -242,6 +242,13 @@ func runPrimeCompactResume(ctx RoleContext) {
 	fmt.Println("\n---")
 	fmt.Println()
 	fmt.Println("**Continue your current task.** If you've lost context, run `gt prime` for full reload.")
+
+	// Remind polecats about gt done — after compaction the agent may have lost
+	// the formula checklist and forgotten that gt done is required to submit work.
+	// Without this, polecats finish implementation and sit at the prompt forever.
+	if ctx.Role == RolePolecat {
+		fmt.Printf("\n**IMPORTANT**: When all work is complete (code committed, tests pass), run `%s done` to submit to the merge queue.\n", cli.Name())
+	}
 }
 
 // validatePrimeFlags checks that CLI flag combinations are valid.
@@ -801,8 +808,9 @@ func outputMoleculeWorkflow(ctx RoleContext, attachment *beads.AttachmentFields)
 	if attachment.AttachedFormula != "" {
 		showFormulaStepsFull(attachment.AttachedFormula, strings.Split(attachment.FormulaVars, "\n"))
 		fmt.Println()
-		fmt.Printf("%s\n", style.Bold.Render("Work through the checklist above. When all steps complete, run `"+cli.Name()+" done`."))
+		fmt.Printf("%s\n", style.Bold.Render("Work through ALL steps above, including submit and cleanup."))
 		fmt.Println("The base bead is your assignment. The formula steps define your workflow.")
+		fmt.Printf("\n%s\n", style.Bold.Render("REQUIRED: When all steps complete, run `"+cli.Name()+" done` to submit to the merge queue. Do NOT stop after implementation — the formula has submit steps you must follow."))
 		return
 	}
 

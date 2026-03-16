@@ -989,3 +989,54 @@ func TestCheckSlungWork_StandaloneFormulaUsesWorkflowOutput(t *testing.T) {
 		t.Fatalf("expected standalone formula context to be shown, got:\n%s", output)
 	}
 }
+
+// TestCompactResumeReminder_PolecatGetsGtDone verifies that polecats get a
+// gt done reminder after context compaction. This is the regression test for
+// the polecats-no-gt-done bug: after long work sessions, compaction drops the
+// formula checklist and the agent forgets to call gt done.
+func TestCompactResumeReminder_PolecatGetsGtDone(t *testing.T) {
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	ctx := RoleContext{Role: RolePolecat}
+	// Simulate compact source
+	primeHookSource = "compact"
+	defer func() { primeHookSource = "" }()
+
+	runPrimeCompactResume(ctx)
+
+	w.Close()
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	os.Stdout = oldStdout
+	output := buf.String()
+
+	if !strings.Contains(output, "gt done") {
+		t.Fatalf("compact/resume for polecat must remind about gt done, got:\n%s", output)
+	}
+}
+
+// TestCompactResumeReminder_NonPolecatNoGtDone verifies that non-polecat roles
+// do NOT get the gt done reminder (it's polecat-specific).
+func TestCompactResumeReminder_NonPolecatNoGtDone(t *testing.T) {
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	ctx := RoleContext{Role: RoleCrew}
+	primeHookSource = "compact"
+	defer func() { primeHookSource = "" }()
+
+	runPrimeCompactResume(ctx)
+
+	w.Close()
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	os.Stdout = oldStdout
+	output := buf.String()
+
+	if strings.Contains(output, "gt done") {
+		t.Fatalf("compact/resume for non-polecat should NOT mention gt done, got:\n%s", output)
+	}
+}
