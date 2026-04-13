@@ -149,6 +149,7 @@ func (b *Beads) CreateRigBead(name string, fields *RigFields) (*Issue, error) {
 		"--title=" + name,
 		"--description=" + description,
 		"--labels=gt:rig",
+		"--type=rig",
 	}
 	if NeedsForceForID(id) {
 		args = append(args, "--force")

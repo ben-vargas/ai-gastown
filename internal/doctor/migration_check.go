@@ -15,6 +15,13 @@ import (
 	"github.com/steveyegge/gastown/internal/util"
 )
 
+var verifyExpectedDatabasesAtConfig = doltserver.VerifyExpectedDatabasesAtConfig
+
+type serverModeRig struct {
+	name     string
+	database string
+}
+
 // DoltMetadataCheck verifies that all rig .beads/metadata.json files have
 // proper Dolt server configuration (backend, dolt_mode, dolt_database).
 // Missing or incomplete metadata causes the split-brain problem where bd
@@ -266,7 +273,7 @@ func NewDoltServerReachableCheck() *DoltServerReachableCheck {
 // Run checks if any rig has server-mode metadata but the server is unreachable.
 func (c *DoltServerReachableCheck) Run(ctx *CheckContext) *CheckResult {
 	// Find rigs configured for server mode, grouped by server address
-	rigsByAddr := c.findServerModeRigsByAddr(ctx.TownRoot)
+	rigsByAddr := c.findServerModeRigs(ctx.TownRoot)
 	if len(rigsByAddr) == 0 {
 		return &CheckResult{
 			Name:     c.Name(),
@@ -278,6 +285,7 @@ func (c *DoltServerReachableCheck) Run(ctx *CheckContext) *CheckResult {
 
 	// Check connectivity to each unique server address
 	var unreachable []string
+	var missingDatabases []string
 	var details []string
 	totalRigs := 0
 	unreachableRigs := 0
@@ -287,9 +295,46 @@ func (c *DoltServerReachableCheck) Run(ctx *CheckContext) *CheckResult {
 		if err != nil {
 			unreachable = append(unreachable, addr)
 			unreachableRigs += len(rigs)
-			details = append(details, fmt.Sprintf("Server %s unreachable (rigs: %s)", addr, strings.Join(rigs, ", ")))
+			var rigNames []string
+			for _, rig := range rigs {
+				rigNames = append(rigNames, rig.name)
+			}
+			details = append(details, fmt.Sprintf("Server %s unreachable (rigs: %s)", addr, strings.Join(rigNames, ", ")))
 		} else {
 			_ = conn.Close()
+			cfg := doltserver.DefaultConfig(ctx.TownRoot)
+			cfg.Host = hostForAddr(addr)
+			cfg.Port = portForAddr(addr)
+			var expected []string
+			for _, rig := range rigs {
+				expected = append(expected, rig.database)
+			}
+			_, missing, verifyErr := verifyExpectedDatabasesAtConfig(cfg, expected)
+			if verifyErr != nil {
+				fixHint := "Check the configured Dolt server and verify the expected rig databases are being served"
+				if isLocalDoltAddr(addr) {
+					fixHint = "Repair or quarantine malformed databases in .dolt-data/ before relying on shared-server health"
+				}
+				return &CheckResult{
+					Name:     c.Name(),
+					Status:   StatusError,
+					Message:  fmt.Sprintf("Dolt server reachable but database verification failed at %s", addr),
+					Details:  []string{verifyErr.Error()},
+					FixHint:  fixHint,
+					Category: c.CheckCategory,
+				}
+			}
+			if len(missing) > 0 {
+				expected := make(map[string]string, len(rigs))
+				for _, rig := range rigs {
+					expected[rig.database] = rig.name
+				}
+				for _, db := range missing {
+					if rigName, ok := expected[db]; ok {
+						missingDatabases = append(missingDatabases, fmt.Sprintf("%s (%s)", db, rigName))
+					}
+				}
+			}
 		}
 	}
 
@@ -308,6 +353,17 @@ func (c *DoltServerReachableCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
+	if len(missingDatabases) > 0 {
+		return &CheckResult{
+			Name:     c.Name(),
+			Status:   StatusError,
+			Message:  fmt.Sprintf("Dolt server reachable but %d expected rig database(s) are missing", len(missingDatabases)),
+			Details:  missingDatabases,
+			FixHint:  "Repair or recreate the missing rig databases before relying on shared-server health",
+			Category: c.CheckCategory,
+		}
+	}
+
 	return &CheckResult{
 		Name:     c.Name(),
 		Status:   StatusOK,
@@ -316,15 +372,15 @@ func (c *DoltServerReachableCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 }
 
-// findServerModeRigsByAddr returns rig names grouped by their configured server address.
+// findServerModeRigs returns server-mode rigs grouped by their configured server address.
 // Rigs without explicit host/port fall back to the port from config.yaml or daemon.json.
-func (c *DoltServerReachableCheck) findServerModeRigsByAddr(townRoot string) map[string][]string {
-	result := make(map[string][]string)
+func (c *DoltServerReachableCheck) findServerModeRigs(townRoot string) map[string][]serverModeRig {
+	result := make(map[string][]serverModeRig)
 
 	// Check town-level beads (hq)
 	townBeadsDir := filepath.Join(townRoot, ".beads")
 	if addr, ok := c.getServerAddr(townBeadsDir, townRoot); ok {
-		result[addr] = append(result[addr], "hq")
+		result[addr] = append(result[addr], serverModeRig{name: "hq", database: "hq"})
 	}
 
 	// Check rig-level beads
@@ -337,11 +393,62 @@ func (c *DoltServerReachableCheck) findServerModeRigsByAddr(townRoot string) map
 			beadsDir = filepath.Join(townRoot, rigName, ".beads")
 		}
 		if addr, ok := c.getServerAddr(beadsDir, townRoot); ok {
-			result[addr] = append(result[addr], rigName)
+			result[addr] = append(result[addr], serverModeRig{name: rigName, database: c.getDoltDatabase(beadsDir, rigName)})
 		}
 	}
 
 	return result
+}
+
+func isLocalDoltAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	switch host {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	default:
+		return false
+	}
+}
+
+func hostForAddr(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "127.0.0.1"
+	}
+	return host
+}
+
+func portForAddr(addr string) int {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return doltserver.DefaultPort
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return doltserver.DefaultPort
+	}
+	return port
+}
+
+func (c *DoltServerReachableCheck) getDoltDatabase(beadsDir, fallback string) string {
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		return fallback
+	}
+	var metadata struct {
+		DoltDatabase string `json:"dolt_database"`
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return fallback
+	}
+	if metadata.DoltDatabase == "" {
+		return fallback
+	}
+	return metadata.DoltDatabase
 }
 
 // getServerAddr reads metadata.json and returns the configured server address if dolt_mode is "server".

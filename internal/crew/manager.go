@@ -848,7 +848,17 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 	}
 
 	// Apply rig-based theming (non-fatal: theming failure doesn't affect operation)
-	theme := tmux.ResolveSessionTheme(townRoot, m.rig.Name, "crew")
+	theme := tmux.ResolveSessionTheme(townRoot, m.rig.Name, "crew", name)
+	if theme != nil {
+		theme.Window = session.ResolveWindowTint(m.rig.Name, "crew")
+		if theme.Window == nil && session.IsWindowTintEnabled(m.rig.Name) {
+			factor := session.ResolveTintFactor(m.rig.Name)
+			theme.Window = &tmux.WindowStyle{
+				BG: tmux.DarkenColor(theme.BG, factor),
+				FG: theme.FG,
+			}
+		}
+	}
 	_ = t.ConfigureGasTownSession(sessionID, theme, m.rig.Name, name, "crew")
 
 	// Set up C-b n/p keybindings for crew session cycling (non-fatal)

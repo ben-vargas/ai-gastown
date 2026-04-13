@@ -1,4 +1,4 @@
-.PHONY: build desktop-build desktop-run install safe-install check-forward-only clean test test-e2e-container check-up-to-date
+.PHONY: build desktop-build desktop-run install safe-install check-forward-only check-version-tag clean test test-e2e-container check-up-to-date
 
 BINARY := gt
 BINARY_DESKTOP := gt-desktop
@@ -135,6 +135,36 @@ safe-install: check-up-to-date check-forward-only build
 	done
 	@echo "Installed $(BINARY) to $(INSTALL_DIR)/$(BINARY) (daemon NOT restarted)"
 	@echo "Sessions will pick up new binary on next cycle."
+
+# check-version-tag: Verify that if HEAD is tagged vX.Y.Z, the Version constant
+# in internal/cmd/version.go equals X.Y.Z. No-op when HEAD is untagged, so it is
+# safe to run on every build but only fails release tag checkouts.
+# Prevents recurrence of gh#3459 (v0.13.0 shipped reporting 0.12.1).
+check-version-tag:
+	@TAG=$$(git describe --tags --exact-match HEAD 2>/dev/null || true); \
+	if [ -z "$$TAG" ]; then \
+		echo "check-version-tag: HEAD is not a release tag, skipping"; \
+		exit 0; \
+	fi; \
+	case "$$TAG" in \
+		v[0-9]*) TAG_VERSION=$${TAG#v} ;; \
+		*) echo "check-version-tag: tag '$$TAG' is not a vX.Y.Z release tag, skipping"; exit 0 ;; \
+	esac; \
+	CODE_VERSION=$$(grep -E '^[[:space:]]*Version[[:space:]]*=[[:space:]]*"' internal/cmd/version.go | head -1 | sed 's/.*"\([^"]*\)".*/\1/'); \
+	if [ -z "$$CODE_VERSION" ]; then \
+		echo "ERROR: could not parse Version from internal/cmd/version.go"; \
+		exit 1; \
+	fi; \
+	if [ "$$TAG_VERSION" != "$$CODE_VERSION" ]; then \
+		echo "ERROR: version mismatch between git tag and Version constant"; \
+		echo "  git tag at HEAD:          $$TAG (expects Version=$$TAG_VERSION)"; \
+		echo "  internal/cmd/version.go:  Version=$$CODE_VERSION"; \
+		echo ""; \
+		echo "Run scripts/bump-version.sh before tagging, or re-tag HEAD correctly."; \
+		echo "See gh#3459 for background."; \
+		exit 1; \
+	fi; \
+	echo "check-version-tag: OK (tag $$TAG matches Version=$$CODE_VERSION)"
 
 clean:
 	rm -f $(BUILD_DIR)/$(BINARY)

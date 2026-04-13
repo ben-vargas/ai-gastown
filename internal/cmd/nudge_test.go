@@ -444,6 +444,41 @@ func TestIdleWatcherPollInterval(t *testing.T) {
 	}
 }
 
+func TestNudgeTrailingSlashNormalization(t *testing.T) {
+	// The mail system uses "mayor/" and "deacon/" as canonical addresses.
+	// runNudge must strip the trailing slash so these match the role shortcuts.
+	// Without normalization, "mayor/" falls through to parseAddress which
+	// rejects it ("invalid address format"), silently dropping the nudge.
+	origMode := nudgeModeFlag
+	origPriority := nudgePriorityFlag
+	origMessage := nudgeMessageFlag
+	origStdin := nudgeStdinFlag
+	origTimeout := waitIdleTimeout
+	defer func() {
+		nudgeModeFlag = origMode
+		nudgePriorityFlag = origPriority
+		nudgeMessageFlag = origMessage
+		nudgeStdinFlag = origStdin
+		waitIdleTimeout = origTimeout
+	}()
+
+	waitIdleTimeout = 200 * time.Millisecond
+	nudgeStdinFlag = false
+	nudgeMessageFlag = "test"
+	nudgePriorityFlag = "normal"
+	nudgeModeFlag = NudgeModeImmediate
+
+	for _, target := range []string{"mayor/", "deacon/", "witness/", "refinery/"} {
+		t.Run(target, func(t *testing.T) {
+			err := runNudge(nudgeCmd, []string{target, "hello"})
+			// Will fail on tmux/session lookup, but must NOT fail on address parsing.
+			if err != nil && strings.Contains(err.Error(), "invalid address format") {
+				t.Errorf("trailing-slash target %q was rejected as invalid address: %v", target, err)
+			}
+		})
+	}
+}
+
 func TestIdleWatcherExitsOnEmptyQueue(t *testing.T) {
 	// watchAndDeliver should exit immediately when queue is empty
 	// (someone else drained it). We test this by calling with a

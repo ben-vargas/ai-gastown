@@ -481,6 +481,34 @@ func TestIsAgentRunning_NonexistentSession(t *testing.T) {
 	}
 }
 
+func TestIsRuntimeRunning_AgentNameRequiresCursorSession(t *testing.T) {
+	tm := newTestTmux(t)
+	sessionName := "gt-test-runtime-agent-filter-" + t.Name()
+	_ = tm.KillSession(sessionName)
+	if err := tm.NewSessionWithCommand(sessionName, "", "sleep 60"); err != nil {
+		t.Fatalf("NewSessionWithCommand: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	// sleep matches; "agent" in the list is ignored when session does not declare Cursor
+	if !tm.IsRuntimeRunning(sessionName, []string{"agent", "sleep"}) {
+		t.Error("expected sleep to match when agent is stripped for non-cursor sessions")
+	}
+	if tm.IsRuntimeRunning(sessionName, []string{"agent"}) {
+		t.Error("expected bare agent not to match without GT_AGENT=cursor / GT_PROCESS_NAMES")
+	}
+	if err := tm.SetEnvironment(sessionName, "GT_AGENT", "cursor"); err != nil {
+		t.Fatalf("SetEnvironment: %v", err)
+	}
+	// With Cursor declared, "agent" is kept in the filter list (pane is still sleep — no match on agent alone)
+	if tm.IsRuntimeRunning(sessionName, []string{"agent"}) {
+		t.Error("pane is sleep, not agent — should not match on agent name alone")
+	}
+	if !tm.IsRuntimeRunning(sessionName, []string{"agent", "sleep"}) {
+		t.Error("expected sleep to still match with GT_AGENT=cursor")
+	}
+}
+
 func TestIsRuntimeRunning(t *testing.T) {
 	tm := newTestTmux(t)
 	sessionName := "gt-test-runtime-" + t.Name()
@@ -1703,6 +1731,30 @@ func TestNudgeSession_WithRetry(t *testing.T) {
 	}
 }
 
+func TestNudgeSession_WithStoredPaneID(t *testing.T) {
+	tm := newTestTmux(t)
+	sessionName := "gt-test-nudge-paneid-" + fmt.Sprintf("%d", time.Now().UnixNano()%10000)
+
+	if err := tm.NewSession(sessionName, os.TempDir()); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer func() { _ = tm.KillSession(sessionName) }()
+
+	time.Sleep(200 * time.Millisecond)
+
+	paneID, err := tm.GetPaneID(sessionName)
+	if err != nil {
+		t.Fatalf("GetPaneID: %v", err)
+	}
+	if err := tm.SetEnvironment(sessionName, "GT_PANE_ID", paneID); err != nil {
+		t.Fatalf("SetEnvironment GT_PANE_ID: %v", err)
+	}
+
+	if err := tm.NudgeSession(sessionName, "test message"); err != nil {
+		t.Fatalf("NudgeSession() with GT_PANE_ID = %v, want nil", err)
+	}
+}
+
 // TestAdaptiveTextDelay verifies the delay scaling logic for post-text delivery.
 func TestAdaptiveTextDelay(t *testing.T) {
 	t.Parallel()
@@ -2143,6 +2195,38 @@ func TestSessionPrefixPattern_WithTownRoot(t *testing.T) {
 	// Verify it's a sorted alternation.
 	if !strings.HasPrefix(pattern, "^(") || !strings.HasSuffix(pattern, ")-") {
 		t.Errorf("pattern %q has unexpected format", pattern)
+	}
+}
+
+func TestSessionPrefixPattern_FallsBackToGTTownRoot(t *testing.T) {
+	// When GT_ROOT is empty but GT_TOWN_ROOT is set, sessionPrefixPattern
+	// should use GT_TOWN_ROOT to discover rig prefixes.
+	townRoot := os.Getenv("GT_ROOT")
+	if townRoot == "" {
+		townRoot = os.Getenv("GT_TOWN_ROOT")
+	}
+	if townRoot == "" {
+		t.Skip("neither GT_ROOT nor GT_TOWN_ROOT set; skipping")
+	}
+
+	// Clear GT_ROOT, set GT_TOWN_ROOT — simulates daemon startup env.
+	t.Setenv("GT_ROOT", "")
+	t.Setenv("GT_TOWN_ROOT", townRoot)
+
+	pattern := sessionPrefixPattern()
+	if !strings.Contains(pattern, "gt") {
+		t.Errorf("pattern %q missing 'gt'", pattern)
+	}
+	if !strings.Contains(pattern, "hq") {
+		t.Errorf("pattern %q missing 'hq'", pattern)
+	}
+	// With a real rigs.json via GT_TOWN_ROOT, we expect more than just gt+hq.
+	// At minimum there should be 3+ prefixes in a multi-rig town.
+	inner := strings.TrimPrefix(pattern, "^(")
+	inner = strings.TrimSuffix(inner, ")-")
+	prefixes := strings.Split(inner, "|")
+	if len(prefixes) < 3 {
+		t.Errorf("expected at least 3 prefixes via GT_TOWN_ROOT fallback, got %d: %v", len(prefixes), prefixes)
 	}
 }
 

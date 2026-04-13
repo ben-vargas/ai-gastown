@@ -134,9 +134,10 @@ func runWlStamp(cmd *cobra.Command, args []string) error {
 		StampIndex:  -1, // will be computed below
 	}
 
-	if !doltserver.DatabaseExists(townRoot, doltserver.WLCommonsDB) {
+	dbName := wasteland.ResolveDBName(townRoot)
+	if !doltserver.DatabaseExists(townRoot, dbName) {
 		if wlCfg.LocalDir == "" {
-			return fmt.Errorf("database %q not found\nJoin a wasteland first with: gt wl join <org/db>", doltserver.WLCommonsDB)
+			return fmt.Errorf("database %q not found\nJoin a wasteland first with: gt wl join <org/db>", dbName)
 		}
 		return insertStampInLocalClone(wlCfg.LocalDir, stamp)
 	}

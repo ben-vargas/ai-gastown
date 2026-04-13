@@ -26,6 +26,17 @@ import (
 	"github.com/steveyegge/gastown/internal/util"
 )
 
+func stripEnvKey(env []string, key string) []string {
+	prefix := key + "="
+	filtered := env[:0]
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, prefix) {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
+}
+
 // shortSHA returns at most 8 characters of a SHA for display.
 func shortSHA(sha string) string {
 	if len(sha) > 8 {
@@ -161,12 +172,16 @@ type MergeQueueConfig struct {
 	AutoPush bool `json:"auto_push"`
 
 	// MergeStrategy controls how the refinery lands work: "direct" (default)
-	// does local squash merge + git push; "pr" uses gh pr merge via GitHub API
-	// which respects branch protection rules.
+	// does local squash merge + git push; "pr" uses the VCS provider's merge API
+	// which respects branch protection/restriction rules.
 	MergeStrategy string `json:"merge_strategy,omitempty"`
 
+	// VCSProvider selects the VCS platform for PR operations when
+	// MergeStrategy="pr". Valid values: "github" (default), "bitbucket".
+	VCSProvider string `json:"vcs_provider,omitempty"`
+
 	// RequireReview controls whether the refinery requires at least one approving
-	// GitHub review before merging a PR. Only meaningful when MergeStrategy="pr".
+	// review before merging a PR. Only meaningful when MergeStrategy="pr".
 	// Nil defaults to false (no review required).
 	RequireReview *bool `json:"require_review,omitempty"`
 
@@ -255,6 +270,7 @@ type Engineer struct {
 	beads                 *beads.Beads
 	git                   *git.Git
 	config                *MergeQueueConfig
+	prProvider            PRProvider   // VCS-specific PR operations (nil when MergeStrategy != "pr")
 	workDir               string
 	output                io.Writer    // Output destination for user-facing messages
 	router                *mail.Router // Mail router for sending protocol messages
@@ -347,6 +363,7 @@ func (e *Engineer) LoadConfig() error {
 		GatesParallel        *bool                      `json:"gates_parallel"`
 		AutoPush             *bool                      `json:"auto_push"`
 		MergeStrategy        *string                    `json:"merge_strategy"`
+		VCSProvider          *string                    `json:"vcs_provider"`
 		RequireReview        *bool                      `json:"require_review"`
 	}
 
@@ -429,10 +446,38 @@ func (e *Engineer) LoadConfig() error {
 	if mqRaw.MergeStrategy != nil {
 		e.config.MergeStrategy = *mqRaw.MergeStrategy
 	}
+	if mqRaw.VCSProvider != nil {
+		e.config.VCSProvider = *mqRaw.VCSProvider
+	}
 	if mqRaw.RequireReview != nil {
 		e.config.RequireReview = mqRaw.RequireReview
 	}
 
+	// Initialize the PR provider when merge_strategy=pr.
+	if e.config.MergeStrategy == "pr" {
+		if err := e.initPRProvider(); err != nil {
+			return fmt.Errorf("initializing PR provider: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// initPRProvider creates the appropriate PRProvider based on vcs_provider config.
+// Defaults to GitHub when vcs_provider is empty or "github".
+func (e *Engineer) initPRProvider() error {
+	switch e.config.VCSProvider {
+	case "", "github":
+		e.prProvider = newGitHubPRProvider(e.git)
+	case "bitbucket":
+		p, err := newBitbucketPRProvider(e.git)
+		if err != nil {
+			return err
+		}
+		e.prProvider = p
+	default:
+		return fmt.Errorf("unknown vcs_provider %q (supported: github, bitbucket)", e.config.VCSProvider)
+	}
 	return nil
 }
 
@@ -584,9 +629,10 @@ func (e *Engineer) doMerge(ctx context.Context, branch, target, sourceIssue stri
 		_, _ = fmt.Fprintln(e.output, "[Engineer] Tests passed")
 	}
 
-	// PR merge path: when merge_strategy=pr, use GitHub's merge API instead of
-	// local squash merge + direct push. This respects branch protection rules
-	// and preserves the PR audit trail.
+	// PR merge path: when merge_strategy=pr, use the VCS provider's merge API
+	// instead of local squash merge + direct push. This respects branch
+	// protection/restriction rules and preserves the PR audit trail.
+	// The VCS provider (GitHub, Bitbucket) is selected via vcs_provider config.
 	if e.config.MergeStrategy == "pr" {
 		return e.doMergePR(ctx, branch, target)
 	}
@@ -704,14 +750,29 @@ func (e *Engineer) doMerge(ctx context.Context, branch, target, sourceIssue stri
 	}
 }
 
-// doMergePR handles merging via GitHub's PR merge API (merge_strategy=pr).
-// This respects branch protection rules including required reviews.
+// doMergePR handles merging via the VCS provider's PR merge API (merge_strategy=pr).
+// This respects branch protection/restriction rules including required reviews.
+// The VCS provider (GitHub, Bitbucket) is selected via vcs_provider config.
 // Called from doMerge after quality gates have passed.
+//
+//nolint:unparam // ctx is reserved for future use when git methods accept context
 func (e *Engineer) doMergePR(ctx context.Context, branch, target string) ProcessResult {
-	_, _ = fmt.Fprintln(e.output, "[Engineer] Using PR merge strategy (merge_strategy=pr)")
+	_ = ctx
+	provider := e.config.VCSProvider
+	if provider == "" {
+		provider = "github"
+	}
+	_, _ = fmt.Fprintf(e.output, "[Engineer] Using PR merge strategy (vcs_provider=%s)\n", provider)
 
-	// Step PR.1: Find the GitHub PR for this branch
-	prNumber, err := e.git.FindPRNumber(branch)
+	if e.prProvider == nil {
+		return ProcessResult{
+			Success: false,
+			Error:   fmt.Sprintf("no PR provider configured for vcs_provider=%s", provider),
+		}
+	}
+
+	// Step PR.1: Find the PR for this branch
+	prNumber, err := e.prProvider.FindPRNumber(branch)
 	if err != nil {
 		return ProcessResult{
 			Success: false,
@@ -729,7 +790,7 @@ func (e *Engineer) doMergePR(ctx context.Context, branch, target string) Process
 	// Step PR.2: Check approval status if require_review is enabled
 	requireReview := e.config.RequireReview != nil && *e.config.RequireReview
 	if requireReview {
-		approved, err := e.git.IsPRApproved(prNumber)
+		approved, err := e.prProvider.IsPRApproved(prNumber)
 		if err != nil {
 			return ProcessResult{
 				Success: false,
@@ -747,27 +808,23 @@ func (e *Engineer) doMergePR(ctx context.Context, branch, target string) Process
 		_, _ = fmt.Fprintf(e.output, "[Engineer] PR #%d has approving review\n", prNumber)
 	}
 
-	// Step PR.3: Merge via GitHub API using squash merge
-	// gh pr merge respects branch protection rules — if protection requires
-	// reviews and the PR doesn't have them, the merge will fail.
-	_, _ = fmt.Fprintf(e.output, "[Engineer] Merging PR #%d via gh pr merge --squash...\n", prNumber)
-	mergeCommit, err := e.git.GhPrMerge(prNumber, "squash")
+	// Step PR.3: Merge via VCS provider API using squash merge
+	_, _ = fmt.Fprintf(e.output, "[Engineer] Merging PR #%d via %s API (squash)...\n", prNumber, provider)
+	mergeCommit, err := e.prProvider.MergePR(prNumber, "squash")
 	if err != nil {
 		return ProcessResult{
 			Success: false,
-			Error:   fmt.Sprintf("gh pr merge failed for PR #%d: %v", prNumber, err),
+			Error:   fmt.Sprintf("PR merge failed for PR #%d: %v", prNumber, err),
 		}
 	}
 
-	// Step PR.4: Sync local target branch after GitHub merge
-	// Reset local target to match origin so subsequent operations see the merged state.
+	// Step PR.4: Sync local target branch after remote merge
 	if err := e.git.Checkout(target); err != nil {
 		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to checkout %s after PR merge: %v\n", target, err)
 	} else if err := e.git.Pull("origin", target); err != nil {
 		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to pull %s after PR merge: %v\n", target, err)
 	}
 
-	// Get the actual merge commit SHA if GhPrMerge couldn't determine it
 	if mergeCommit == "" {
 		if sha, err := e.git.Rev("HEAD"); err == nil {
 			mergeCommit = sha
@@ -780,6 +837,7 @@ func (e *Engineer) doMergePR(ctx context.Context, branch, target string) Process
 		MergeCommit: mergeCommit,
 	}
 }
+
 
 func (e *Engineer) acquireMainPushSlot(ctx context.Context) (string, error) {
 	slotID, err := e.mergeSlotEnsureExists()
@@ -1431,10 +1489,17 @@ The Refinery will automatically retry the merge after you force-push.`,
 		Priority:    mr.Priority,
 		Description: description,
 		Actor:       e.rig.Name + "/refinery",
+		Rig:         e.rig.Name, // Ensure task lands in the rig's database (gt-7y7)
 	})
 	if err != nil {
 		releaseSlotOnError()
 		return "", fmt.Errorf("creating conflict resolution task: %w", err)
+	}
+
+	// gt-gpy: Validate task bead landed in the rig's database (warning only).
+	townRoot := filepath.Dir(e.rig.Path)
+	if prefixErr := beads.ValidateRigPrefix(townRoot, e.rig.Name, task.ID); prefixErr != nil {
+		_, _ = fmt.Fprintf(e.output, "[Engineer] WARNING: conflict task prefix mismatch: %v\n", prefixErr)
 	}
 
 	// The conflict task's ID is returned so the MR can be blocked on it.
@@ -1871,10 +1936,14 @@ type convoyInfo struct {
 // checkAndCloseCompletedConvoys finds and closes convoys where all tracked issues
 // are complete. Returns the list of convoys that were closed.
 func (e *Engineer) checkAndCloseCompletedConvoys(townRoot, townBeads string) []convoyInfo {
+	bdEnv := stripEnvKey(os.Environ(), "BEADS_DIR")
+
 	// List all open convoys
-	listCmd := exec.Command("bd", "list", "--type=convoy", "--status=open", "--json")
+	listArgs := beads.MaybePrependAllowStaleWithEnv(bdEnv, []string{"list", "--type=convoy", "--status=open", "--json"})
+	listCmd := exec.Command("bd", listArgs...)
 	util.SetDetachedProcessGroup(listCmd)
 	listCmd.Dir = townBeads
+	listCmd.Env = bdEnv
 	var stdout bytes.Buffer
 	listCmd.Stdout = &stdout
 
@@ -1898,9 +1967,11 @@ func (e *Engineer) checkAndCloseCompletedConvoys(townRoot, townBeads string) []c
 
 	for _, convoy := range convoys {
 		// Get tracked issues for this convoy via bd dep list
-		depCmd := exec.Command("bd", "dep", "list", convoy.ID, "--direction=down", "--type=tracks", "--json")
+		depArgs := beads.MaybePrependAllowStaleWithEnv(bdEnv, []string{"dep", "list", convoy.ID, "--direction=down", "--type=tracks", "--json"})
+		depCmd := exec.Command("bd", depArgs...)
 		util.SetDetachedProcessGroup(depCmd)
 		depCmd.Dir = townRoot
+		depCmd.Env = bdEnv
 		var depOut bytes.Buffer
 		depCmd.Stdout = &depOut
 
@@ -1929,9 +2000,11 @@ func (e *Engineer) checkAndCloseCompletedConvoys(townRoot, townBeads string) []c
 			}
 
 			// Get fresh status from home rig via bd show with routing
-			showCmd := exec.Command("bd", "show", depID, "--json")
+			showArgs := beads.MaybePrependAllowStaleWithEnv(bdEnv, []string{"show", depID, "--json"})
+			showCmd := exec.Command("bd", showArgs...)
 			util.SetDetachedProcessGroup(showCmd)
 			showCmd.Dir = townRoot
+			showCmd.Env = bdEnv
 			var showOut bytes.Buffer
 			showCmd.Stdout = &showOut
 
@@ -1965,9 +2038,11 @@ func (e *Engineer) checkAndCloseCompletedConvoys(townRoot, townBeads string) []c
 			reason = "Empty convoy — auto-closed as definitionally complete"
 		}
 
-		closeCmd := exec.Command("bd", "close", convoy.ID, "-r", reason)
+		closeArgs := beads.MaybePrependAllowStaleWithEnv(bdEnv, []string{"close", convoy.ID, "-r", reason})
+		closeCmd := exec.Command("bd", closeArgs...)
 		util.SetDetachedProcessGroup(closeCmd)
 		closeCmd.Dir = townBeads
+		closeCmd.Env = bdEnv
 
 		if err := closeCmd.Run(); err != nil {
 			_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to close convoy %s: %v\n", convoy.ID, err)

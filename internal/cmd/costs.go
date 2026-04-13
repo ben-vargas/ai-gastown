@@ -640,6 +640,11 @@ func parseSessionName(sess string) (role, rig, worker string) {
 	case session.RoleMayor:
 		return constants.RoleMayor, "", "mayor"
 	case session.RoleDeacon:
+		// Boot is modeled as a deacon dog (Role: deacon, Name: boot).
+		// Attribute its costs separately so token spend is visible per role.
+		if identity.Name == "boot" {
+			return constants.RoleBoot, "", "boot"
+		}
 		return constants.RoleDeacon, "", "deacon"
 	case session.RoleWitness:
 		return constants.RoleWitness, identity.Rig, ""

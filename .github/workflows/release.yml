@@ -42,6 +42,9 @@ jobs:
             exit 1
           fi
 
+      - name: Verify tag matches Version constant
+        run: make check-version-tag
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7
         with:

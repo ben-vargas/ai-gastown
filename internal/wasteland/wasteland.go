@@ -264,6 +264,19 @@ func LocalCloneDir(townRoot, upstreamOrg, upstreamDB string) string {
 	return filepath.Join(WastelandDir(townRoot), upstreamOrg, upstreamDB)
 }
 
+// ResolveDBName returns the Dolt database name for the wasteland.
+// It derives the name from the config's ForkDB field (replacing hyphens with
+// underscores, since Dolt maps database directory names that way).
+// Falls back to "wl_commons" if no config is found.
+func ResolveDBName(townRoot string) string {
+	cfg, err := LoadConfig(townRoot)
+	if err != nil || cfg.ForkDB == "" {
+		return "wl_commons"
+	}
+	// Dolt maps directory names to database names by replacing hyphens with underscores.
+	return strings.ReplaceAll(cfg.ForkDB, "-", "_")
+}
+
 // escapeSQLString escapes backslashes and single quotes for SQL string literals.
 func escapeSQLString(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)

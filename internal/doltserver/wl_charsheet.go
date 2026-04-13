@@ -356,8 +356,12 @@ func parseSkillTagsJSON(skillTags string) []string {
 
 // QueryStampsForSubject fetches all stamps where the given handle is the subject.
 func QueryStampsForSubject(townRoot, subject string) ([]StampRecord, error) {
+	return queryStampsForSubjectDB(townRoot, WLCommonsDB, subject)
+}
+
+func queryStampsForSubjectDB(townRoot, dbName, subject string) ([]StampRecord, error) {
 	query := fmt.Sprintf(`USE %s; SELECT id, author, subject, valence, confidence, severity, COALESCE(context_id,'') as context_id, COALESCE(context_type,'') as context_type, COALESCE(stamp_type,'') as stamp_type, COALESCE(skill_tags,'') as skill_tags, COALESCE(message,'') as message, COALESCE(prev_stamp_hash,'') as prev_stamp_hash, COALESCE(stamp_index,-1) as stamp_index, COALESCE(created_at,'') as created_at FROM stamps WHERE subject='%s' ORDER BY created_at DESC;`,
-		WLCommonsDB, EscapeSQL(subject))
+		dbName, EscapeSQL(subject))
 
 	output, err := doltSQLQuery(townRoot, query)
 	if err != nil {
@@ -398,8 +402,12 @@ func QueryStampsForSubject(townRoot, subject string) ([]StampRecord, error) {
 
 // QueryBadges fetches all badges for a rig handle.
 func QueryBadges(townRoot, handle string) ([]BadgeRecord, error) {
+	return queryBadgesDB(townRoot, WLCommonsDB, handle)
+}
+
+func queryBadgesDB(townRoot, dbName, handle string) ([]BadgeRecord, error) {
 	query := fmt.Sprintf(`USE %s; SELECT id, badge_type, COALESCE(awarded_at,'') as awarded_at, COALESCE(evidence,'') as evidence FROM badges WHERE rig_handle='%s' ORDER BY awarded_at ASC;`,
-		WLCommonsDB, EscapeSQL(handle))
+		dbName, EscapeSQL(handle))
 
 	output, err := doltSQLQuery(townRoot, query)
 	if err != nil {
@@ -425,7 +433,11 @@ func QueryBadges(townRoot, handle string) ([]BadgeRecord, error) {
 
 // QueryAllSubjects returns all distinct subject handles from the stamps table.
 func QueryAllSubjects(townRoot string) ([]string, error) {
-	query := fmt.Sprintf(`USE %s; SELECT DISTINCT subject FROM stamps ORDER BY subject;`, WLCommonsDB)
+	return queryAllSubjectsDB(townRoot, WLCommonsDB)
+}
+
+func queryAllSubjectsDB(townRoot, dbName string) ([]string, error) {
+	query := fmt.Sprintf(`USE %s; SELECT DISTINCT subject FROM stamps ORDER BY subject;`, dbName)
 	output, err := doltSQLQuery(townRoot, query)
 	if err != nil {
 		return nil, err
@@ -442,6 +454,10 @@ func QueryAllSubjects(townRoot string) ([]string, error) {
 
 // UpsertLeaderboard inserts or updates a leaderboard entry.
 func UpsertLeaderboard(townRoot string, entry *LeaderboardEntry) error {
+	return upsertLeaderboardDB(townRoot, WLCommonsDB, entry)
+}
+
+func upsertLeaderboardDB(townRoot, dbName string, entry *LeaderboardEntry) error {
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 
 	displayName := "NULL"
@@ -461,7 +477,7 @@ func UpsertLeaderboard(townRoot string, entry *LeaderboardEntry) error {
 REPLACE INTO leaderboard (handle, display_name, tier, stamp_count, avg_quality, cluster_breadth, top_skills, badges, computed_at)
 VALUES ('%s', %s, '%s', %d, %f, %d, %s, %s, '%s');
 `,
-		WLCommonsDB,
+		dbName,
 		EscapeSQL(entry.Handle), displayName, EscapeSQL(entry.Tier),
 		entry.StampCount, entry.AvgQuality, entry.ClusterBreadth,
 		topSkills, badges, now)

@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/doltserver"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/wasteland"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -115,25 +116,112 @@ func runWLStamps(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
+	// Fast path: query through the Dolt server if the database is registered.
+	dbName := wasteland.ResolveDBName(townRoot)
+	if doltserver.DatabaseExists(townRoot, dbName) {
+		query := buildStampsQuery(StampsFilter{
+			Subject:     wlStampsRig,
+			Author:      wlStampsAuthor,
+			Skill:       wlStampsSkill,
+			ContextType: wlStampsContextType,
+			StampType:   wlStampsStampType,
+			PilotCohort: wlStampsCohort,
+			Severity:    wlStampsSeverity,
+			Limit:       wlStampsLimit,
+		})
+		serverQuery := fmt.Sprintf("USE %s; %s", dbName, query)
+
+		if wlStampsJSON {
+			output, err := doltserver.QueryJSON(townRoot, serverQuery)
+			if err != nil {
+				return err
+			}
+			fmt.Print(output)
+			return nil
+		}
+
+		// Use JSON output for richer parsing (valence, skill_tags are JSON).
+		output, err := doltserver.QueryJSON(townRoot, serverQuery)
+		if err != nil {
+			return err
+		}
+
+		var result struct {
+			Rows []map[string]interface{} `json:"rows"`
+		}
+		if err := json.Unmarshal([]byte(output), &result); err != nil {
+			return fmt.Errorf("parsing response: %w", err)
+		}
+
+		if len(result.Rows) == 0 {
+			fmt.Printf("No stamps found for rig %q.\n", wlStampsRig)
+			return nil
+		}
+
+		tbl := style.NewTable(
+			style.Column{Name: "ID", Width: 16},
+			style.Column{Name: "AUTHOR", Width: 20},
+			style.Column{Name: "VALENCE", Width: 28},
+			style.Column{Name: "CONF", Width: 5, Align: style.AlignRight},
+			style.Column{Name: "SEVERITY", Width: 8},
+			style.Column{Name: "TYPE", Width: 14},
+			style.Column{Name: "SKILLS", Width: 18},
+			style.Column{Name: "DATE", Width: 10},
+		)
+
+		for _, row := range result.Rows {
+			id := getString(row, "id")
+			author := getString(row, "author")
+			valence := formatValence(row["valence"])
+			conf := getString(row, "confidence")
+			severity := getString(row, "severity")
+			ctxType := getString(row, "context_type")
+			skills := formatSkillTags(row["skill_tags"])
+			date := formatStampDate(getString(row, "created_at"))
+			tbl.AddRow(id, author, valence, conf, severity, ctxType, skills, date)
+		}
+
+		fmt.Printf("Stamps for %s (%d):\n\n", style.Bold.Render(wlStampsRig), len(result.Rows))
+		fmt.Print(tbl.Render())
+		return nil
+	}
+
+	// Fallback: read from local filesystem clone.
 	doltPath, err := exec.LookPath("dolt")
 	if err != nil {
 		return fmt.Errorf("dolt not found in PATH — install from https://docs.dolthub.com/introduction/installation")
 	}
 
-	// Try local fork first (fast path)
-	forkDir := findWLCommonsFork(townRoot)
-	cloneDir := forkDir
+	// Try wasteland config first (set by gt wl join).
+	var cloneDir string
+	if cfg, cfgErr := wasteland.LoadConfig(townRoot); cfgErr == nil && cfg.LocalDir != "" {
+		if _, statErr := os.Stat(filepath.Join(cfg.LocalDir, ".dolt")); statErr == nil {
+			cloneDir = cfg.LocalDir
+		}
+	}
 
-	// No local fork — clone fresh
+	// Try local fork (fast path)
 	if cloneDir == "" {
+		cloneDir = findWLCommonsFork(townRoot)
+	}
+
+	// No local fork — clone fresh from config upstream or default
+	if cloneDir == "" {
+		commonsOrg := "hop"
+		commonsDB := "wl-commons"
+		if cfg, cfgErr := wasteland.LoadConfig(townRoot); cfgErr == nil && cfg.Upstream != "" {
+			if o, d, parseErr := wasteland.ParseUpstream(cfg.Upstream); parseErr == nil {
+				commonsOrg = o
+				commonsDB = d
+			}
+		}
+
 		tmpDir, tmpErr := os.MkdirTemp("", "wl-stamps-*")
 		if tmpErr != nil {
 			return fmt.Errorf("creating temp directory: %w", tmpErr)
 		}
 		defer os.RemoveAll(tmpDir)
 
-		commonsOrg := "hop"
-		commonsDB := "wl-commons"
 		cloneDir = filepath.Join(tmpDir, commonsDB)
 		remote := fmt.Sprintf("%s/%s", commonsOrg, commonsDB)
 

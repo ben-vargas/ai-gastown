@@ -1,16 +1,17 @@
 package config
 
 import (
+	"os"
 	"testing"
 )
 
 func TestValidCostTiers(t *testing.T) {
 	t.Parallel()
 	tiers := ValidCostTiers()
-	if len(tiers) != 3 {
-		t.Fatalf("ValidCostTiers() returned %d tiers, want 3", len(tiers))
+	if len(tiers) != 5 {
+		t.Fatalf("ValidCostTiers() returned %d tiers, want 5", len(tiers))
 	}
-	expected := map[string]bool{"standard": true, "economy": true, "budget": true}
+	expected := map[string]bool{"standard": true, "economy": true, "budget": true, "custom-groq-opus": true, "custom-groq-sonnet": true}
 	for _, tier := range tiers {
 		if !expected[tier] {
 			t.Errorf("unexpected tier %q", tier)
@@ -27,6 +28,7 @@ func TestIsValidTier(t *testing.T) {
 		{"standard", true},
 		{"economy", true},
 		{"budget", true},
+		{"custom-groq-opus", true},
 		{"premium", false},
 		{"", false},
 		{"Standard", false}, // case-sensitive
@@ -118,6 +120,29 @@ func TestCostTierRoleAgents(t *testing.T) {
 		}
 	})
 
+	t.Run("custom-groq-opus has correct assignments", func(t *testing.T) {
+		t.Parallel()
+		ra := CostTierRoleAgents(TierCustomGroqOpus)
+		if ra == nil {
+			t.Fatal("custom-groq-opus tier returned nil")
+		}
+		expected := map[string]string{
+			"mayor":    "",
+			"deacon":   "groq-compound",
+			"witness":  "groq-compound",
+			"refinery": "groq-compound",
+			"polecat":  "groq-compound",
+			"crew":     "",
+			"boot":     "groq-compound",
+			"dog":      "groq-compound",
+		}
+		for role, want := range expected {
+			if got := ra[role]; got != want {
+				t.Errorf("custom-groq-opus[%q] = %q, want %q", role, got, want)
+			}
+		}
+	})
+
 	t.Run("invalid tier returns nil", func(t *testing.T) {
 		t.Parallel()
 		ra := CostTierRoleAgents("invalid")
@@ -178,13 +203,13 @@ func TestCostTierAgents(t *testing.T) {
 		}
 		found := false
 		for i, arg := range sonnet.Args {
-			if arg == "--model" && i+1 < len(sonnet.Args) && sonnet.Args[i+1] == "sonnet" {
+			if arg == "--model" && i+1 < len(sonnet.Args) && sonnet.Args[i+1] == "sonnet[1m]" {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Errorf("sonnet Args %v missing --model sonnet", sonnet.Args)
+			t.Errorf("sonnet Args %v missing --model sonnet[1m]", sonnet.Args)
 		}
 	})
 
@@ -204,6 +229,34 @@ func TestCostTierAgents(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("haiku Args %v missing --model haiku", haiku.Args)
+		}
+	})
+
+	t.Run("custom-groq-opus returns groq-compound preset", func(t *testing.T) {
+		t.Parallel()
+		agents := CostTierAgents(TierCustomGroqOpus)
+		if agents == nil {
+			t.Fatal("custom-groq-opus tier returned nil")
+		}
+		groq, ok := agents["groq-compound"]
+		if !ok {
+			t.Fatal("custom-groq-opus tier missing groq-compound agent")
+		}
+		if groq.Command != "claude" {
+			t.Errorf("groq-compound Command = %q, want %q", groq.Command, "claude")
+		}
+		if groq.Env == nil {
+			t.Fatal("groq-compound Env is nil, want Groq API env vars")
+		}
+		if groq.Env["ANTHROPIC_BASE_URL"] != "https://api.groq.com/openai/v1" {
+			t.Errorf("groq-compound ANTHROPIC_BASE_URL = %q, want Groq API URL", groq.Env["ANTHROPIC_BASE_URL"])
+		}
+		if groq.Env["ANTHROPIC_MODEL"] != "compound-beta" {
+			t.Errorf("groq-compound ANTHROPIC_MODEL = %q, want compound-beta", groq.Env["ANTHROPIC_MODEL"])
+		}
+		// Verify the preset reads GROQ_API_KEY from the environment (not a hardcoded value)
+		if groq.Env["ANTHROPIC_API_KEY"] != os.Getenv("GROQ_API_KEY") {
+			t.Errorf("groq-compound ANTHROPIC_API_KEY = %q, want value of GROQ_API_KEY env var", groq.Env["ANTHROPIC_API_KEY"])
 		}
 	})
 }
@@ -538,4 +591,165 @@ func containsSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestCostTierRoleEffort(t *testing.T) {
+	t.Parallel()
+
+	t.Run("standard tier all high", func(t *testing.T) {
+		t.Parallel()
+		re := CostTierRoleEffort(TierStandard)
+		if re == nil {
+			t.Fatal("CostTierRoleEffort(standard) returned nil")
+		}
+		for _, role := range TierManagedRoles {
+			if re[role] != "high" {
+				t.Errorf("standard tier role_effort[%s] = %q, want %q", role, re[role], "high")
+			}
+		}
+	})
+
+	t.Run("economy tier workers high, patrol low/medium", func(t *testing.T) {
+		t.Parallel()
+		re := CostTierRoleEffort(TierEconomy)
+		if re == nil {
+			t.Fatal("CostTierRoleEffort(economy) returned nil")
+		}
+		// Workers should be high
+		for _, role := range []string{"polecat", "crew"} {
+			if re[role] != "high" {
+				t.Errorf("economy tier role_effort[%s] = %q, want %q", role, re[role], "high")
+			}
+		}
+		// Patrol roles should be low
+		for _, role := range []string{"deacon", "witness", "boot", "dog"} {
+			if re[role] != "low" {
+				t.Errorf("economy tier role_effort[%s] = %q, want %q", role, re[role], "low")
+			}
+		}
+		// Mayor and refinery should be medium
+		for _, role := range []string{"mayor", "refinery"} {
+			if re[role] != "medium" {
+				t.Errorf("economy tier role_effort[%s] = %q, want %q", role, re[role], "medium")
+			}
+		}
+	})
+
+	t.Run("budget tier workers medium, patrol low", func(t *testing.T) {
+		t.Parallel()
+		re := CostTierRoleEffort(TierBudget)
+		if re == nil {
+			t.Fatal("CostTierRoleEffort(budget) returned nil")
+		}
+		for _, role := range []string{"polecat", "crew"} {
+			if re[role] != "medium" {
+				t.Errorf("budget tier role_effort[%s] = %q, want %q", role, re[role], "medium")
+			}
+		}
+		for _, role := range []string{"mayor", "deacon", "witness", "refinery", "boot", "dog"} {
+			if re[role] != "low" {
+				t.Errorf("budget tier role_effort[%s] = %q, want %q", role, re[role], "low")
+			}
+		}
+	})
+
+	t.Run("invalid tier returns nil", func(t *testing.T) {
+		t.Parallel()
+		if re := CostTierRoleEffort("invalid"); re != nil {
+			t.Errorf("CostTierRoleEffort(invalid) = %v, want nil", re)
+		}
+	})
+}
+
+func TestIsValidEffortLevel(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		level string
+		want  bool
+	}{
+		{"low", true},
+		{"medium", true},
+		{"high", true},
+		{"max", true},
+		{"", false},
+		{"extreme", false},
+		{"High", false}, // case-sensitive
+	}
+	for _, tt := range tests {
+		t.Run(tt.level, func(t *testing.T) {
+			t.Parallel()
+			if got := IsValidEffortLevel(tt.level); got != tt.want {
+				t.Errorf("IsValidEffortLevel(%q) = %v, want %v", tt.level, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyCostTier_SetsRoleEffort(t *testing.T) {
+	t.Parallel()
+
+	t.Run("economy tier sets non-high effort levels", func(t *testing.T) {
+		t.Parallel()
+		settings := NewTownSettings()
+		if err := ApplyCostTier(settings, TierEconomy); err != nil {
+			t.Fatalf("ApplyCostTier: %v", err)
+		}
+		// Workers have high effort — should NOT be in the map (high is default)
+		for _, role := range []string{"polecat", "crew"} {
+			if _, ok := settings.RoleEffort[role]; ok {
+				t.Errorf("RoleEffort[%s] should not be set (high is default)", role)
+			}
+		}
+		// Patrol roles should have low
+		for _, role := range []string{"deacon", "witness", "boot", "dog"} {
+			if settings.RoleEffort[role] != "low" {
+				t.Errorf("RoleEffort[%s] = %q, want %q", role, settings.RoleEffort[role], "low")
+			}
+		}
+		// Mayor and refinery should have medium
+		for _, role := range []string{"mayor", "refinery"} {
+			if settings.RoleEffort[role] != "medium" {
+				t.Errorf("RoleEffort[%s] = %q, want %q", role, settings.RoleEffort[role], "medium")
+			}
+		}
+	})
+
+	t.Run("standard tier clears role effort entries", func(t *testing.T) {
+		t.Parallel()
+		settings := NewTownSettings()
+		// Apply economy first
+		if err := ApplyCostTier(settings, TierEconomy); err != nil {
+			t.Fatalf("ApplyCostTier economy: %v", err)
+		}
+		// Then switch to standard
+		if err := ApplyCostTier(settings, TierStandard); err != nil {
+			t.Fatalf("ApplyCostTier standard: %v", err)
+		}
+		// All roles should be cleared (high is default, not persisted)
+		for _, role := range TierManagedRoles {
+			if val, ok := settings.RoleEffort[role]; ok {
+				t.Errorf("RoleEffort[%s] = %q, want deleted (standard tier)", role, val)
+			}
+		}
+	})
+}
+
+func TestFormatTierRoleTable_IncludesEffort(t *testing.T) {
+	t.Parallel()
+	table := FormatTierRoleTable(TierEconomy)
+	if table == "" {
+		t.Fatal("FormatTierRoleTable(economy) returned empty string")
+	}
+	// Workers should show "effort: high"
+	if !containsSubstring(table, "effort: high") {
+		t.Error("economy tier table should contain 'effort: high' for workers")
+	}
+	// Should contain effort: low for patrol roles
+	if !containsSubstring(table, "effort: low") {
+		t.Error("economy tier table should contain 'effort: low' for patrol roles")
+	}
+	// Should contain effort: medium for mayor/refinery
+	if !containsSubstring(table, "effort: medium") {
+		t.Error("economy tier table should contain 'effort: medium' for mayor/refinery")
+	}
 }

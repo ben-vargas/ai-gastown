@@ -51,10 +51,26 @@ gt daemon stop && gt daemon start
 
 The `release.yml` workflow triggers automatically:
 
-1. **goreleaser** job builds binaries for all platforms and creates the GitHub Release
-2. **publish-npm** job publishes to npm (best-effort, `continue-on-error: true`)
+1. **Verify tag matches Version constant** — runs `make check-version-tag` and
+   aborts the release if the pushed tag (`vX.Y.Z`) doesn't match the `Version`
+   constant in `internal/cmd/version.go`. Prevents recurrence of
+   [#3459](https://github.com/steveyegge/gastown/issues/3459) where v0.13.0
+   shipped reporting 0.12.1.
+2. **goreleaser** job builds binaries for all platforms and creates the GitHub Release
+3. **publish-npm** job publishes to npm (best-effort, `continue-on-error: true`)
 
 Homebrew is NOT updated by the workflow. See below.
+
+### Running the tag/version check locally
+
+```bash
+make check-version-tag
+```
+
+The target is a no-op on untagged HEADs, so it's safe to run on any checkout.
+It only fails when HEAD is tagged `vX.Y.Z` and the `Version` constant doesn't
+match. Run it after `scripts/bump-version.sh` and before pushing the tag if you
+want to catch drift before CI does.
 
 ## Homebrew (homebrew-core)
 

@@ -45,9 +45,9 @@ func init() {
 
 // StageResult is the top-level JSON output for gt convoy stage --json.
 type StageResult struct {
-	Status           string          `json:"status"`              // "staged_ready", "staged_warnings", or "error"
-	ConvoyID         string          `json:"convoy_id"`           // empty if errors prevented creation
-	Restaged         bool            `json:"restaged"`            // true if an existing convoy was updated in place
+	Status           string          `json:"status"`                       // "staged_ready", "staged_warnings", or "error"
+	ConvoyID         string          `json:"convoy_id"`                    // empty if errors prevented creation
+	Restaged         bool            `json:"restaged"`                     // true if an existing convoy was updated in place
 	ValidationBeadID string          `json:"validation_bead_id,omitempty"` // capstone validation bead (epic input only)
 	Errors           []FindingJSON   `json:"errors"`
 	Warnings         []FindingJSON   `json:"warnings"`
@@ -726,22 +726,18 @@ func createStagedConvoy(dag *ConvoyDAG, waves []Wave, status string, title strin
 	}
 
 	// Set the staged status.
-	statusCmd := exec.Command("bd", "update", convoyID, "--status="+status)
-	statusCmd.Dir = townBeads
-	if out, err := statusCmd.CombinedOutput(); err != nil {
+	// Strip BEADS_DIR so bd discovers the correct database from Dir()
+	// rather than using an inherited (possibly wrong) override.
+	if out, err := BdCmd("update", convoyID, "--status="+status).
+		Dir(townBeads).StripBeadsDir().WithAutoCommit().
+		CombinedOutput(); err != nil {
 		return "", fmt.Errorf("bd update convoy status: %w\noutput: %s", err, out)
 	}
 
 	// Track each slingable bead via bd dep add.
-	// Cross-rig tracking may fail because bd validates both IDs exist in the
-	// same database (beads v0.62 removed cross-rig routing). Non-fatal: the
-	// convoy still works without tracking deps.
 	for _, beadID := range slingableIDs {
-		if out, err := BdCmd("dep", "add", convoyID, beadID, "--type=tracks").
-			Dir(townBeads).WithAutoCommit().StripBeadsDir().
-			CombinedOutput(); err != nil {
+		if err := addTrackingRelationFn(townBeads, convoyID, beadID); err != nil {
 			fmt.Printf("  Warning: could not track %s in convoy: %v\n", beadID, err)
-			_ = out
 		}
 	}
 
@@ -774,14 +770,10 @@ func updateStagedConvoy(existingConvoyID string, dag *ConvoyDAG, waves []Wave, s
 	}
 
 	// Add new beads not currently tracked.
-	// Cross-rig tracking may fail (bd validates both IDs in same DB). Non-fatal.
 	for _, id := range desiredIDs {
 		if !currentIDs[id] {
-			if out, err := BdCmd("dep", "add", existingConvoyID, id, "--type=tracks").
-				Dir(townBeads).WithAutoCommit().StripBeadsDir().
-				CombinedOutput(); err != nil {
+			if err := addTrackingRelationFn(townBeads, existingConvoyID, id); err != nil {
 				fmt.Printf("  Warning: could not track %s in convoy: %v\n", id, err)
-				_ = out
 			}
 		}
 	}
@@ -789,11 +781,8 @@ func updateStagedConvoy(existingConvoyID string, dag *ConvoyDAG, waves []Wave, s
 	// Remove stale beads no longer in the DAG.
 	for id := range currentIDs {
 		if !desiredSet[id] {
-			if out, err := BdCmd("dep", "remove", existingConvoyID, id, "--type=tracks").
-				Dir(townBeads).WithAutoCommit().StripBeadsDir().
-				CombinedOutput(); err != nil {
+			if err := removeTrackingRelationFn(townBeads, existingConvoyID, id); err != nil {
 				fmt.Printf("  Warning: could not untrack %s from convoy: %v\n", id, err)
-				_ = out
 			}
 		}
 	}
@@ -1504,8 +1493,14 @@ func bdDepList(beadID string) ([]bdDepResult, error) {
 // routes.jsonl so this works regardless of the caller's working directory.
 func bdListChildren(parentID string) ([]bdShowResult, error) {
 	cmd := exec.Command("bd", "list", "--parent="+parentID, "--json")
-	if dir := beadsDirForID(parentID); dir != "" {
+	// Route to the correct rig database via prefix resolution.
+	// resolveBeadDir returns the parent of .beads (the working directory bd
+	// expects), unlike beadsDirForID which returns the .beads directory itself.
+	// Also strip BEADS_DIR to prevent inherited overrides from interfering
+	// with bd's workspace detection (consistent with bdShow/bdDepList).
+	if dir := resolveBeadDir(parentID); dir != "" && dir != "." {
 		cmd.Dir = dir
+		cmd.Env = filterEnvKey(os.Environ(), "BEADS_DIR")
 	}
 	out, err := cmd.Output()
 	if err != nil {

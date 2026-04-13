@@ -682,12 +682,14 @@ gh pr checks <polecat-branch> --repo "$REPO_URL" --watch --fail-fast
 Do NOT merge. Send FIX_NEEDED back to the polecat:
 ```bash
 FAILURE_OUTPUT=$(gh pr checks <polecat-branch> --repo "$REPO_URL" 2>&1)
-gt mail send <rig>/witness -s "FIX_NEEDED <polecat-name>" -m "Branch: <branch>
+gt mail send <rig>/polecats/<polecat-name> -s "FIX_NEEDED <polecat-name>" --stdin <<'BODY'
+Branch: <branch>
 Issue: <issue-id>
 PR: ${PR_URL}
 Failure-Type: ci-checks
 Error: $FAILURE_OUTPUT
-Attempt-Number: 1"
+Attempt-Number: 1
+BODY
 ```
 Then skip to Step 4 (archive mail) and continue patrol.
 
@@ -983,7 +985,7 @@ End of patrol cycle decision. Use the signals from context-check to decide.
 
 Resolve your agent bead ID for this patrol cycle. You MUST replace `<YOUR_RIG>` below with your actual rig name (e.g., `beads`, `town`) before running:
 ```bash
-bd list --type=agent --desc-contains="role_type: refinery" --json | jq -r '.[] | select(.status != "closed") | select(.description | test("(?m)^\\\\s*rig: <YOUR_RIG>\\\\s*$")) | .id'
+bd list --label=gt:agent --desc-contains="role_type: refinery" --json | jq -r '.[] | select(.status != "closed") | select(.description | test("(?m)^\\\\s*rig: <YOUR_RIG>\\\\s*$")) | .id'
 ```
 This must return exactly one bead ID. If it returns zero results, STOP and report an error — verify you substituted `<YOUR_RIG>` correctly. If it returns multiple results, STOP and report an error — manual disambiguation is required. Use the single resolved bead ID as YOUR_AGENT_BEAD in the commands below.
 

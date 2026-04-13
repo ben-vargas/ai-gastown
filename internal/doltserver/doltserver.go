@@ -360,10 +360,21 @@ func readDaemonEnvVar(path, key string) string {
 
 // IsRemote returns true when the config points to a non-local Dolt server.
 // Empty host, "127.0.0.1", "localhost", "::1", and "[::1]" are all considered local.
+// Hostnames that resolve to a loopback address are also treated as local.
 func (c *Config) IsRemote() bool {
 	switch strings.ToLower(c.Host) {
 	case "", "127.0.0.1", "localhost", "::1", "[::1]":
 		return false
+	}
+	// Resolve hostname and check if it points to loopback.
+	addrs, err := net.LookupHost(c.Host)
+	if err != nil {
+		return true
+	}
+	for _, addr := range addrs {
+		if ip := net.ParseIP(addr); ip != nil && ip.IsLoopback() {
+			return false
+		}
 	}
 	return true
 }
@@ -407,14 +418,20 @@ func (c *Config) HostPort() string {
 	return fmt.Sprintf("%s:%d", host, c.Port)
 }
 
-// buildDoltSQLCmd constructs a dolt sql command that works for both local and remote servers.
-// For local: runs from config.DataDir so dolt auto-detects the running server.
-// For remote: prepends connection flags and passes password via DOLT_CLI_PASSWORD env var.
+// buildDoltSQLCmd constructs a non-interactive dolt sql command that always
+// talks to the running SQL server over TCP.
+//
+// For local servers, this avoids embedded-mode auto-discovery, which can load
+// databases relative to cmd.Dir instead of querying the live shared server.
 func buildDoltSQLCmd(ctx context.Context, config *Config, args ...string) *exec.Cmd {
-	sqlArgs := config.SQLArgs()
-	fullArgs := make([]string, 0, len(sqlArgs)+1+len(args))
-	fullArgs = append(fullArgs, "sql")
-	fullArgs = append(fullArgs, sqlArgs...)
+	fullArgs := make([]string, 0, 8+len(args))
+	fullArgs = append(fullArgs,
+		"--host", config.EffectiveHost(),
+		"--port", strconv.Itoa(config.Port),
+		"--user", config.User,
+		"--no-tls",
+		"sql",
+	)
 	fullArgs = append(fullArgs, args...)
 
 	cmd := exec.CommandContext(ctx, "dolt", fullArgs...)
@@ -425,9 +442,9 @@ func buildDoltSQLCmd(ctx context.Context, config *Config, args ...string) *exec.
 	cmd.Dir = config.DataDir
 	setProcessGroup(cmd)
 
-	if config.IsRemote() && config.Password != "" {
-		cmd.Env = append(os.Environ(), "DOLT_CLI_PASSWORD="+config.Password)
-	}
+	// Always set DOLT_CLI_PASSWORD to suppress interactive prompts.
+	// When empty, dolt connects without a password, which is the local default.
+	cmd.Env = append(os.Environ(), "DOLT_CLI_PASSWORD="+config.Password)
 
 	return cmd
 }
@@ -1487,66 +1504,17 @@ func Start(townRoot string) error {
 	}
 
 	// Quarantine corrupted/phantom database dirs before server launch.
-	// Dolt auto-discovers ALL dirs in --data-dir. A phantom dir with a broken
-	// noms store (missing manifest) crashes the ENTIRE server. (gt-hs1i2)
+	// WARNING: DO NOT remove, delete, or modify files inside Dolt's .dolt/
+	// directory — including noms/LOCK files. These are Dolt-internal files.
+	// Removing them WILL cause unrecoverable data corruption and data loss.
+	// Dolt manages these files itself; external interference is never safe.
 	//
-	// Safety: move to .quarantine/ instead of deleting, and skip large databases
-	// that are likely legitimate but temporarily corrupted. (gt-xvh)
-	if entries, readErr := os.ReadDir(config.DataDir); readErr == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				continue
-			}
-			name := entry.Name()
-			if strings.HasPrefix(name, ".") {
-				continue // Skip hidden dirs (.dolt, .doltcfg, .quarantine, etc.)
-			}
-			dbDir := filepath.Join(config.DataDir, name)
-			doltDir := filepath.Join(dbDir, ".dolt")
-			if _, statErr := os.Stat(doltDir); statErr != nil {
-				continue // Not a dolt dir at all — skip
-			}
-			manifest := filepath.Join(doltDir, "noms", "manifest")
-			if _, statErr := os.Stat(manifest); statErr == nil {
-				continue // Manifest exists — healthy database
-			}
-			// Missing manifest — this database would crash the server.
-			// Check size: large databases (>1MB) are likely legitimate databases
-			// with a transient corruption, not empty phantoms. Move instead of delete.
-			size := dirSize(dbDir)
-			quarantineDir := filepath.Join(config.DataDir, ".quarantine")
-			if err := os.MkdirAll(quarantineDir, 0755); err != nil {
-				fmt.Fprintf(os.Stderr, "Quarantine: failed to create quarantine dir: %v\n", err)
-				continue
-			}
-			dest := filepath.Join(quarantineDir, fmt.Sprintf("%s.%d", name, time.Now().Unix()))
-			if err := os.Rename(dbDir, dest); err != nil {
-				// Cross-device rename fails — fall back to removal only for tiny dirs
-				if size > 1<<20 { // >1MB — refuse to destroy, just warn
-					fmt.Fprintf(os.Stderr, "Quarantine: SKIPPING large database %q (%s, missing noms/manifest) — move failed: %v\n",
-						name, formatBytes(size), err)
-					fmt.Fprintf(os.Stderr, "  Manual fix: mv %s %s\n", dbDir, dest)
-				} else {
-					fmt.Fprintf(os.Stderr, "Quarantine: removing small phantom database dir %q (%s, missing noms/manifest)\n",
-						name, formatBytes(size))
-					_ = os.RemoveAll(dbDir)
-				}
-			} else {
-				fmt.Fprintf(os.Stderr, "Quarantine: moved database %q to %s (%s, missing noms/manifest)\n",
-					name, dest, formatBytes(size))
-			}
-		}
-	}
+	// Previously this section quarantined/removed database dirs with missing
+	// noms/manifest and cleaned up stale .dolt/noms/LOCK files. Both operations
+	// manipulated Dolt-internal state and risked data corruption. Dolt handles
+	// its own lock files and database integrity on startup.
 
-	// Clean up stale Dolt LOCK files in all database directories
 	databases, _ := ListDatabases(townRoot)
-	for _, db := range databases {
-		dbDir := filepath.Join(config.DataDir, db)
-		if err := cleanupStaleDoltLock(dbDir); err != nil {
-			// Non-fatal warning
-			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-		}
-	}
 
 	// Open log file
 	logFile, err := os.OpenFile(config.LogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
@@ -1653,6 +1621,7 @@ func Start(townRoot string) error {
 	}
 	maxAttempts := dbCount * 10 // 10 × 500ms = 5s per database
 	var lastErr error
+	tcpReachable := false
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		time.Sleep(500 * time.Millisecond)
 
@@ -1661,50 +1630,51 @@ func Start(townRoot string) error {
 			return fmt.Errorf("Dolt server process died during startup (check logs with 'gt dolt logs')")
 		}
 
-		if err := CheckServerReachable(townRoot); err == nil {
-			return nil // Server is up and accepting connections
-		} else {
-			lastErr = err
+		if !tcpReachable {
+			if err := CheckServerReachable(townRoot); err != nil {
+				lastErr = err
+				continue
+			}
+			tcpReachable = true
 		}
+
+		// TCP listener is up. Verify that the expected on-disk databases are
+		// actually being served before declaring success. Without this check
+		// Start() can return on the first iteration where Dolt has bound its
+		// port but is still discovering/loading databases — leaving callers
+		// (and waiting agents) connected to a server that only exposes
+		// information_schema and mysql. Symptom: gt down + gt up cycle leaves
+		// SHOW DATABASES showing no rig databases until the user manually
+		// runs gt dolt stop + gt dolt start. (gt-nq1)
+		if len(databases) == 0 {
+			return nil // Nothing to verify — fresh install or empty data dir
+		}
+		_, missing, verifyErr := VerifyDatabases(townRoot)
+		if verifyErr != nil {
+			lastErr = fmt.Errorf("verifying databases: %w", verifyErr)
+			continue
+		}
+		if len(missing) == 0 {
+			return nil // Server is up and serving every expected database
+		}
+		lastErr = fmt.Errorf("server is reachable but %d/%d databases not yet served (missing: %v)",
+			len(missing), len(databases), missing)
 	}
 
 	totalTimeout := time.Duration(dbCount) * 5 * time.Second
-	return fmt.Errorf("Dolt server process started (PID %d) but not accepting connections after %v (%d databases × 5s): %w\nCheck logs with: gt dolt logs", cmd.Process.Pid, totalTimeout, dbCount, lastErr)
+	if !tcpReachable {
+		return fmt.Errorf("Dolt server process started (PID %d) but not accepting connections after %v (%d databases × 5s): %w\nCheck logs with: gt dolt logs", cmd.Process.Pid, totalTimeout, dbCount, lastErr)
+	}
+	return fmt.Errorf("Dolt server process started (PID %d) and is reachable, but databases failed to load after %v (%d databases × 5s): %w\nRecovery: gt dolt stop && gt dolt start\nCheck logs with: gt dolt logs", cmd.Process.Pid, totalTimeout, dbCount, lastErr)
 }
 
-// cleanupStaleDoltLock removes a stale Dolt LOCK file if no process holds it.
-// Dolt's embedded mode uses a file lock at .dolt/noms/LOCK that can become stale
-// after crashes. This checks if any process holds the lock before removing.
-// Returns nil if lock is held by active processes (this is expected if bd is running).
-func cleanupStaleDoltLock(databaseDir string) error {
-	lockPath := filepath.Join(databaseDir, ".dolt", "noms", "LOCK")
-
-	// Check if lock file exists
-	if _, err := os.Stat(lockPath); os.IsNotExist(err) {
-		return nil // No lock file, nothing to clean
-	}
-
-	// Check if any process holds this file open using lsof
-	cmd := exec.Command("lsof", lockPath)
-	setProcessGroup(cmd)
-	_, err := cmd.Output()
-	if err != nil {
-		// lsof returns exit code 1 when no process has the file open
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			// No process holds the lock - safe to remove stale lock
-			if err := os.Remove(lockPath); err != nil {
-				return fmt.Errorf("failed to remove stale LOCK file: %w", err)
-			}
-			return nil
-		}
-		// Other error - ignore, let dolt handle it
-		return nil
-	}
-
-	// lsof found processes - lock is legitimately held (likely by bd)
-	// This is not an error condition; dolt server will handle the conflict
-	return nil
-}
+// WARNING: DO NOT remove, delete, or modify files inside Dolt's .dolt/
+// directory — including noms/LOCK files. These are Dolt-internal files.
+// Removing them WILL cause unrecoverable data corruption and data loss.
+// Dolt manages these files itself; external interference is never safe.
+//
+// cleanupStaleDoltLock previously removed stale .dolt/noms/LOCK files.
+// This was unsafe — Dolt manages its own lock files on startup.
 
 // DefaultDoltSocketPath is the default Unix socket Dolt creates.
 const DefaultDoltSocketPath = "/tmp/mysql.sock"
@@ -2029,6 +1999,69 @@ func listDatabasesRemote(config *Config) ([]string, error) {
 // doesn't serve them.
 func VerifyDatabases(townRoot string) (served, missing []string, err error) {
 	return verifyDatabasesWithRetry(townRoot, 1)
+}
+
+// VerifyExpectedDatabasesAtConfig queries SHOW DATABASES on the exact server
+// described by config and reports which expected database names are missing.
+// Unlike VerifyDatabases, this helper does not inspect the filesystem; it is
+// intended for health checks that must validate a specific server address from
+// metadata rather than the town's default local Dolt config.
+func VerifyExpectedDatabasesAtConfig(config *Config, expected []string) (served, missing []string, err error) {
+	const baseBackoff = 1 * time.Second
+	const maxBackoff = 8 * time.Second
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		args := []string{
+			"sql",
+			"--host", config.EffectiveHost(),
+			"--port", strconv.Itoa(config.Port),
+			"--user", config.User,
+			"--no-tls",
+			"-r", "json",
+			"-q", "SHOW DATABASES",
+		}
+		cmd := exec.CommandContext(ctx, "dolt", args...)
+		cmd.Dir = config.DataDir
+		if config.Password != "" {
+			cmd.Env = append(os.Environ(), "DOLT_CLI_PASSWORD="+config.Password)
+		}
+
+		var stderrBuf bytes.Buffer
+		cmd.Stderr = &stderrBuf
+		output, queryErr := cmd.Output()
+		cancel()
+		if queryErr != nil {
+			stderrMsg := strings.TrimSpace(stderrBuf.String())
+			errDetail := strings.TrimSpace(string(output))
+			if stderrMsg != "" {
+				errDetail = errDetail + " (stderr: " + stderrMsg + ")"
+			}
+			lastErr = fmt.Errorf("querying SHOW DATABASES: %w (output: %s)", queryErr, errDetail)
+			if attempt < 3 {
+				backoff := baseBackoff
+				for i := 1; i < attempt; i++ {
+					backoff *= 2
+					if backoff > maxBackoff {
+						backoff = maxBackoff
+						break
+					}
+				}
+				time.Sleep(backoff)
+			}
+			continue
+		}
+
+		served, err = parseShowDatabases(output)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parsing SHOW DATABASES output: %w", err)
+		}
+
+		missing = findMissingDatabases(served, expected)
+		return served, missing, nil
+	}
+
+	return nil, nil, lastErr
 }
 
 // VerifyDatabasesWithRetry is like VerifyDatabases but retries the SHOW DATABASES
@@ -3788,17 +3821,55 @@ func moveDir(src, dest string) error {
 
 // serverExecSQL executes a SQL statement against the Dolt server without targeting
 // a specific database. Used for server-level commands like CREATE DATABASE.
+//
+// Always connects via explicit --host/--port flags to ensure the command goes
+// through the running sql-server process. Without these flags, `dolt sql` runs
+// in embedded mode (even from the data directory), which creates databases on
+// disk but does NOT register them with the live server catalog. This caused
+// "database not found" errors during gt rig add.
 func serverExecSQL(townRoot, query string) error {
 	config := DefaultConfig(townRoot)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	cmd := buildDoltSQLCmd(ctx, config, "-q", query)
+	cmd := buildServerSQLCmd(ctx, config, "-q", query)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w (output: %s)", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+// buildServerSQLCmd constructs a dolt sql command that always connects to the
+// running sql-server via explicit --host/--port flags. Unlike buildDoltSQLCmd,
+// which omits connection flags for local servers (relying on dolt auto-detection),
+// this function ensures the command goes through the live server process.
+// This is critical for DDL operations (CREATE/DROP DATABASE) that must modify
+// the server's in-memory catalog, not just the filesystem.
+//
+// Dolt requires --host, --port, --user, --no-tls as global flags (before the
+// subcommand), not as subcommand flags. The order is:
+//   dolt --host=H --port=P --user=U --no-tls sql -q "..."
+func buildServerSQLCmd(ctx context.Context, config *Config, args ...string) *exec.Cmd {
+	// Global connection flags must come before the "sql" subcommand.
+	// Always pass --password to prevent dolt from prompting on stdin
+	// (which fails with "inappropriate ioctl" in non-TTY environments).
+	password := config.Password
+	fullArgs := []string{
+		"--host", config.EffectiveHost(),
+		"--port", strconv.Itoa(config.Port),
+		"--user", config.User,
+		"--password", password,
+		"--no-tls",
+		"sql",
+	}
+	fullArgs = append(fullArgs, args...)
+
+	cmd := exec.CommandContext(ctx, "dolt", fullArgs...)
+	cmd.Dir = config.DataDir
+	setProcessGroup(cmd)
+
+	return cmd
 }
 
 // waitForCatalog polls the Dolt server until the named database is visible in the
@@ -3819,7 +3890,8 @@ func waitForCatalog(townRoot, dbName string) error {
 			lastErr = err
 			// Only retry catalog-race errors; fail fast on other errors
 			// (connection refused, binary missing, etc.)
-			if !strings.Contains(err.Error(), "Unknown database") {
+			errStr := err.Error()
+			if !strings.Contains(errStr, "Unknown database") && !strings.Contains(errStr, "database not found") {
 				return fmt.Errorf("database %q probe failed (non-retryable): %w", dbName, err)
 			}
 			if attempt < maxAttempts {
@@ -3841,7 +3913,8 @@ func waitForCatalog(townRoot, dbName string) error {
 }
 
 // doltSQL executes a SQL statement against a specific rig database on the Dolt server.
-// Uses the dolt CLI from the data directory (auto-detects running server).
+// Uses explicit --host/--port flags to connect to the running server (same rationale
+// as serverExecSQL — embedded mode doesn't share the server's catalog).
 // The USE prefix selects the database since --use-db is not available on all dolt versions.
 func doltSQL(townRoot, rigDB, query string) error {
 	config := DefaultConfig(townRoot)
@@ -3850,7 +3923,7 @@ func doltSQL(townRoot, rigDB, query string) error {
 
 	// Prepend USE <db> to select the target database.
 	fullQuery := fmt.Sprintf("USE %s; %s", rigDB, query)
-	cmd := buildDoltSQLCmd(ctx, config, "-q", fullQuery)
+	cmd := buildServerSQLCmd(ctx, config, "-q", fullQuery)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w (output: %s)", err, strings.TrimSpace(string(output)))

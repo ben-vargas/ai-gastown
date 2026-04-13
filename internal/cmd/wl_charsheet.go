@@ -54,11 +54,12 @@ func runWlCharsheet(cmd *cobra.Command, args []string) error {
 		handle = wlCfg.RigHandle
 	}
 
-	if !doltserver.DatabaseExists(townRoot, doltserver.WLCommonsDB) {
-		return fmt.Errorf("database %q not found\nJoin a wasteland first with: gt wl join <org/db>", doltserver.WLCommonsDB)
+	dbName := wasteland.ResolveDBName(townRoot)
+	if !doltserver.DatabaseExists(townRoot, dbName) {
+		return fmt.Errorf("database %q not found\nJoin a wasteland first with: gt wl join <org/db>", dbName)
 	}
 
-	store := doltserver.NewWLCommons(townRoot)
+	store := doltserver.NewWLCommonsWithDB(townRoot, dbName)
 	sheet, err := doltserver.AssembleCharacterSheet(store, handle)
 	if err != nil {
 		return fmt.Errorf("assembling character sheet: %w", err)

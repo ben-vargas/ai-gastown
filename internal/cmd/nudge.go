@@ -379,6 +379,12 @@ func runNudge(cmd *cobra.Command, args []string) (retErr error) {
 
 	target := args[0]
 
+	// Normalize trailing slash: the mail system uses "mayor/" and "deacon/"
+	// as canonical addresses, but nudge role shortcuts expect bare names.
+	// Without this, "mayor/" falls through to parseAddress which rejects
+	// the empty second component, silently dropping the nudge.
+	target = strings.TrimSuffix(target, "/")
+
 	// Handle --stdin: read message from stdin (avoids shell quoting issues)
 	if nudgeStdinFlag {
 		if nudgeMessageFlag != "" {

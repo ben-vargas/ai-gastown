@@ -32,6 +32,7 @@ internal/events/*/
 # Local config
 config.toml
 !config.example.toml
+!internal/hooks/templates/vibe/config.toml
 gt
 
 # Runtime state (ignore contents, but allow setup-hooks to be tracked)
@@ -49,6 +50,7 @@ state.json
 .beads/daemon-*.log.gz
 .beads/.sync.lock
 .beads/sync_base.jsonl
+.beads/backup/
 .beads-wisp/
 
 # Clone-specific CLAUDE.md (regenerated locally per clone)
@@ -84,3 +86,13 @@ __pycache__/
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+
+# Beads / Dolt files (added by bd init)
+.beads-credential-key
+
+# Gas Town (added by gt)
+.runtime/
+CLAUDE.local.md
+
+# Fork research notes (private — not for public upstream)
+docs/fork-info/

@@ -63,6 +63,9 @@ func (c *AgentBeadsCheck) Run(ctx *CheckContext) *CheckResult {
 		parts := strings.Split(r.Path, "/")
 		if len(parts) >= 1 && parts[0] != "." {
 			rigName := parts[0]
+			if ctx.RigName != "" && rigName != ctx.RigName {
+				continue
+			}
 			prefix := strings.TrimSuffix(r.Prefix, "-")
 			prefixToRig[prefix] = rigInfo{
 				name:      rigName,
@@ -302,6 +305,11 @@ func (c *AgentBeadsCheck) Fix(ctx *CheckContext) error {
 		if _, err := bd.CreateAgentBead(id, desc, fields); err != nil {
 			return fmt.Errorf("creating %s: %w", id, err)
 		}
+		// Also insert into wisp_labels — CreateAgentBead may create a wisp-backed
+		// bead where bd create --labels only writes to the labels table, not
+		// wisp_labels. Doctor checks query wisps via JOIN wisp_labels, so the label
+		// must exist there or the check still reports the bead as missing. See gt-3vx.
+		_ = addWispLabelSQL(workDir, id, "gt:agent")
 		return nil
 	}
 
@@ -334,6 +342,9 @@ func (c *AgentBeadsCheck) Fix(ctx *CheckContext) error {
 		parts := strings.Split(r.Path, "/")
 		if len(parts) >= 1 && parts[0] != "." {
 			rigName := parts[0]
+			if ctx.RigName != "" && rigName != ctx.RigName {
+				continue
+			}
 			prefix := strings.TrimSuffix(r.Prefix, "-")
 			prefixToRig[prefix] = rigInfo{
 				name:      rigName,
@@ -446,6 +457,18 @@ func addLabelSQL(workDir, beadID, label string) error {
 	escapedID := strings.ReplaceAll(beadID, "'", "''")
 	escapedLabel := strings.ReplaceAll(label, "'", "''")
 	query := fmt.Sprintf("INSERT IGNORE INTO labels (issue_id, label) VALUES ('%s', '%s')", escapedID, escapedLabel)
+	return execBdSQLWrite(workDir, query)
+}
+
+// addWispLabelSQL adds a label to a wisp bead via direct SQL INSERT into wisp_labels.
+// This is needed because bd create --labels=X only inserts into the labels table,
+// not wisp_labels. Doctor checks and bd list for wisps join on wisp_labels to resolve
+// labels, so the label must be present there for wisp-backed beads to be visible.
+// See gt-3vx.
+func addWispLabelSQL(workDir, beadID, label string) error {
+	escapedID := strings.ReplaceAll(beadID, "'", "''")
+	escapedLabel := strings.ReplaceAll(label, "'", "''")
+	query := fmt.Sprintf("INSERT IGNORE INTO wisp_labels (issue_id, label) VALUES ('%s', '%s')", escapedID, escapedLabel)
 	return execBdSQLWrite(workDir, query)
 }
 

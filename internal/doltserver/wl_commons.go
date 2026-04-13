@@ -20,6 +20,9 @@ import (
 // WLCommonsDB is the database name for the wl-commons shared wanted board.
 const WLCommonsDB = "wl_commons"
 
+// DefaultWLDBName is the fallback database name used when no wasteland config exists.
+var DefaultWLDBName = WLCommonsDB
+
 // WLCommonsStore abstracts wl-commons database operations.
 type WLCommonsStore interface {
 	EnsureDB() error
@@ -38,10 +41,31 @@ type WLCommonsStore interface {
 }
 
 // WLCommons implements WLCommonsStore using the real Dolt server.
-type WLCommons struct{ townRoot string }
+type WLCommons struct {
+	townRoot string
+	dbName   string // Dolt database name; defaults to WLCommonsDB if empty.
+}
 
 // NewWLCommons creates a WLCommonsStore backed by the real Dolt server.
-func NewWLCommons(townRoot string) *WLCommons { return &WLCommons{townRoot: townRoot} }
+func NewWLCommons(townRoot string) *WLCommons {
+	return &WLCommons{townRoot: townRoot, dbName: WLCommonsDB}
+}
+
+// NewWLCommonsWithDB creates a WLCommonsStore using the specified database name.
+func NewWLCommonsWithDB(townRoot, dbName string) *WLCommons {
+	if dbName == "" {
+		dbName = WLCommonsDB
+	}
+	return &WLCommons{townRoot: townRoot, dbName: dbName}
+}
+
+// DBName returns the Dolt database name for this store.
+func (w *WLCommons) DBName() string {
+	if w.dbName == "" {
+		return WLCommonsDB
+	}
+	return w.dbName
+}
 
 func (w *WLCommons) EnsureDB() error           { return EnsureWLCommons(w.townRoot) }
 func (w *WLCommons) DatabaseExists(db string) bool { return DatabaseExists(w.townRoot, db) }
@@ -65,16 +89,16 @@ func (w *WLCommons) QueryLastStampForSubject(subject string) (*StampRecord, erro
 	return QueryLastStampForSubject(w.townRoot, subject)
 }
 func (w *WLCommons) QueryStampsForSubject(subject string) ([]StampRecord, error) {
-	return QueryStampsForSubject(w.townRoot, subject)
+	return queryStampsForSubjectDB(w.townRoot, w.DBName(), subject)
 }
 func (w *WLCommons) QueryBadges(handle string) ([]BadgeRecord, error) {
-	return QueryBadges(w.townRoot, handle)
+	return queryBadgesDB(w.townRoot, w.DBName(), handle)
 }
 func (w *WLCommons) QueryAllSubjects() ([]string, error) {
-	return QueryAllSubjects(w.townRoot)
+	return queryAllSubjectsDB(w.townRoot, w.DBName())
 }
 func (w *WLCommons) UpsertLeaderboard(entry *LeaderboardEntry) error {
-	return UpsertLeaderboard(w.townRoot, entry)
+	return upsertLeaderboardDB(w.townRoot, w.DBName(), entry)
 }
 
 // WantedItem represents a row in the wanted table.
@@ -474,6 +498,25 @@ func doltSQLQuery(townRoot, query string) (string, error) {
 	defer cancel()
 
 	cmd := buildDoltSQLCmd(ctx, config, "-r", "csv", "-q", query)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("dolt sql query failed: %w (%s)", err, strings.TrimSpace(string(output)))
+	}
+	return string(output), nil
+}
+
+// QueryCSV executes a SQL query against the Dolt server and returns raw CSV output.
+// This is a convenience wrapper for commands that need server-side query execution.
+func QueryCSV(townRoot, query string) (string, error) {
+	return doltSQLQuery(townRoot, query)
+}
+
+// QueryJSON executes a SQL query against the Dolt server and returns JSON output.
+func QueryJSON(townRoot, query string) (string, error) {
+	config := DefaultConfig(townRoot)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := buildDoltSQLCmd(ctx, config, "-r", "json", "-q", query)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("dolt sql query failed: %w (%s)", err, strings.TrimSpace(string(output)))

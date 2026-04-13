@@ -121,6 +121,30 @@ func TestAssignThemeFromPalette_EmptyPalette(t *testing.T) {
 	}
 }
 
+func TestDarkenColor(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		hex    string
+		factor float64
+		want   string
+	}{
+		{"#ffffff", 0.5, "#7f7f7f"},
+		{"#0d5c63", 0.4, "#052427"},
+		{"#722f37", 0.4, "#2d1216"},
+		{"#1e3a5f", 0.4, "#0c1726"},
+		{"#000000", 0.4, "#000000"},
+		{"default", 0.4, "#default"}, // non-hex passthrough
+	}
+	for _, tt := range tests {
+		t.Run(tt.hex, func(t *testing.T) {
+			got := DarkenColor(tt.hex, tt.factor)
+			if got != tt.want {
+				t.Errorf("DarkenColor(%q, %.1f) = %q, want %q", tt.hex, tt.factor, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAssignThemeFromPalette_CustomPalette(t *testing.T) {
 	t.Parallel()
 	custom := []Theme{

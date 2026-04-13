@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -36,6 +37,14 @@ const (
 	// AgentOmp is Oh My Pi (OMP) — Pi fork with hook-based lifecycle.
 	// Inspired by github.com/ProbabilityEngineer/pi-mono gastown integration.
 	AgentOmp AgentPreset = "omp"
+	// AgentMistral is Mistral Vibe CLI.
+	AgentMistral AgentPreset = "vibe"
+	// AgentGroqCompound routes the Claude CLI to Groq's compound-beta model via
+	// Groq's OpenAI-compatible API endpoint. The claude binary acts as the SDK
+	// proxy; ANTHROPIC_BASE_URL and ANTHROPIC_API_KEY are overridden at runtime
+	// to redirect traffic to api.groq.com. GROQ_API_KEY must be set in the shell
+	// environment — it is read dynamically and never stored in config files.
+	AgentGroqCompound AgentPreset = "groq-compound"
 )
 
 // AgentPresetInfo contains the configuration details for an agent preset.
@@ -59,7 +68,7 @@ type AgentPresetInfo struct {
 
 	// ProcessNames are the process names to look for when detecting if the agent is running.
 	// Used by tmux.IsAgentRunning to check pane_current_command.
-	// E.g., ["node"] for Claude, ["cursor-agent"] for Cursor.
+	// E.g., ["node"] for Claude, ["cursor-agent", "agent"] for Cursor (install script symlinks both names).
 	ProcessNames []string `json:"process_names,omitempty"`
 
 	// SessionIDEnv is the environment variable for session ID.
@@ -283,15 +292,18 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		InstructionsFile:  "AGENTS.md",
 	},
 	AgentCursor: {
-		Name:                AgentCursor,
-		Command:             "cursor-agent",
-		Args:                []string{"-f"}, // Force mode (YOLO equivalent), -p requires prompt
-		ProcessNames:        []string{"cursor-agent"},
+		Name:    AgentCursor,
+		Command: "cursor-agent",
+		// -f/--force: auto-approve tool use (see cursor-agent --help). Install script also symlinks "agent" -> same binary.
+		Args: []string{"-f"},
+		// cursor-agent + agent (install symlinks). Pane matching for "agent" requires session env (GT_AGENT=cursor or GT_PROCESS_NAMES includes cursor-agent); see internal/tmux processNamesForSession.
+		ProcessNames:        []string{"cursor-agent", "agent"},
 		SessionIDEnv:        "", // Uses --resume with chatId directly
 		ResumeFlag:          "--resume",
 		ResumeStyle:         "flag",
 		SupportsHooks:       true,
 		SupportsForkSession: false,
+		// Non-interactive/headless: -p/--print + --output-format json (matches cursor-agent --help).
 		NonInteractive: &NonInteractiveConfig{
 			PromptFlag: "-p",
 			OutputFlag: "--output-format json",
@@ -301,8 +313,10 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		ConfigDir:         ".cursor",
 		HooksProvider:     "cursor",
 		HooksDir:          ".cursor",
-		HooksSettingsFile: "hooks.json",
+		HooksSettingsFile: "hooks.json", // installed path: .cursor/hooks.json
 		InstructionsFile:  "AGENTS.md",
+		// No stable ReadyPromptPrefix yet; delay before nudge poller / early input (HasTurnBoundaryDrain is false — see Copilot).
+		ReadyDelayMs: 5000,
 	},
 	AgentAuggie: {
 		Name:                AgentAuggie,
@@ -426,6 +440,75 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		NonInteractive: &NonInteractiveConfig{
 			PromptFlag: "--prompt",
 		},
+	},
+	AgentMistral: {
+		Name:                AgentMistral,
+		Command:             "vibe",
+		Args:                []string{"--agent", "auto-approve"},
+		ProcessNames:        []string{"vibe"},
+		SessionIDEnv:        "VIBE_SESSION_ID",
+		ResumeFlag:          "--resume",
+		ContinueFlag:        "--continue",
+		ResumeStyle:         "flag",
+		SupportsHooks:       true,
+		SupportsForkSession: false,
+		NonInteractive: &NonInteractiveConfig{
+			PromptFlag: "-p",
+			OutputFlag: "json",
+		},
+		PromptMode:        "arg",
+		ConfigDir:         ".vibe",
+		HooksProvider:     "vibe",
+		HooksDir:          ".vibe",
+		HooksSettingsFile: "config.toml",
+		ReadyPromptPrefix: "❯ ",
+		ReadyDelayMs:      5000,
+		InstructionsFile:  "AGENTS.md",
+	},
+	// AgentGroqCompound uses the Claude CLI as an SDK proxy but routes all
+	// requests to Groq's OpenAI-compatible endpoint by overriding the two
+	// Anthropic SDK environment variables that control the backend:
+	//
+	//   ANTHROPIC_BASE_URL  → https://api.groq.com/openai/v1
+	//   ANTHROPIC_API_KEY   → $GROQ_API_KEY  (read from the shell env at spawn time)
+	//
+	// The model flag --model groq/compound-beta selects Groq's compound
+	// reasoning model. Because the transport is the Claude binary, all Gas
+	// Town hooks, session tracking, tmux readiness detection, and Claude-SDK
+	// lifecycle events work identically to the standard claude preset.
+	//
+	// Prerequisites:
+	//   export GROQ_API_KEY=gsk_...
+	//
+	// The key is resolved at agent spawn time — never stored in config files.
+	AgentGroqCompound: {
+		Name:    AgentGroqCompound,
+		Command: "claude",
+		Args: []string{
+			"--dangerously-skip-permissions",
+		},
+		Env: map[string]string{
+			"ANTHROPIC_BASE_URL": "https://api.groq.com/openai/v1",
+			"ANTHROPIC_MODEL":    "compound-beta",
+			"ANTHROPIC_API_KEY":  "$GROQ_API_KEY",
+		},
+		ProcessNames:         []string{"node", "claude"},
+		SessionIDEnv:         "CLAUDE_SESSION_ID",
+		ResumeFlag:           "--resume",
+		ContinueFlag:         "--continue",
+		ResumeStyle:          "flag",
+		SupportsHooks:        true,
+		PromptMode:           "arg",
+		ConfigDirEnv:         "CLAUDE_CONFIG_DIR",
+		ConfigDir:            ".claude",
+		HooksProvider:        "claude",
+		HooksDir:             ".claude",
+		HooksSettingsFile:    "settings.json",
+		HooksUseSettingsDir:  true,
+		ReadyPromptPrefix:    "❯ ",
+		ReadyDelayMs:         10000,
+		InstructionsFile:     "CLAUDE.md",
+		HasTurnBoundaryDrain: true,
 	},
 }
 
@@ -554,6 +637,14 @@ func ListAgentPresets() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// BuiltInAgentPresetSummary returns a sorted, comma-separated list of built-in preset names
+// for CLI help text (gt config agent list, default-agent, --provider, etc.).
+func BuiltInAgentPresetSummary() string {
+	names := ListAgentPresets()
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }
 
 // DefaultAgentPreset returns the default agent preset (Claude).
@@ -780,7 +871,7 @@ func NewExampleAgentRegistry() *AgentRegistry {
 				ResumeFlag:   "--resume",
 				ResumeStyle:  "flag",
 				NonInteractive: &NonInteractiveConfig{
-					PromptFlag: "-m",
+					PromptFlag: "-p",
 					OutputFlag: "--json",
 				},
 			},

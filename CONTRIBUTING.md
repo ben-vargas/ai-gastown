@@ -154,6 +154,17 @@ For packages with many Dolt-dependent tests, prefer adding
 `testutil.EnsureDoltContainerForTestMain()` in a `TestMain` function so all
 tests in the package share a single container.
 
+## Releasing
+
+Releases are cut from tags of the form `vX.Y.Z`. See [RELEASING.md](RELEASING.md)
+for the full workflow. One guardrail to know about:
+
+- `make check-version-tag` verifies the `Version` constant in
+  `internal/cmd/version.go` matches the tag at HEAD. The release workflow runs
+  this before GoReleaser and fails the release on mismatch. Prevents recurrence
+  of [#3459](https://github.com/steveyegge/gastown/issues/3459). Run it locally
+  after bumping if you want to catch drift before pushing the tag.
+
 ## Questions?
 
 Open an issue for questions about contributing. We're happy to help!

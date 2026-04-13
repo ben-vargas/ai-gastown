@@ -47,6 +47,14 @@ func runWLShow(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
+	// Fast path: query through the Dolt server if the database is registered.
+	dbName := wasteland.ResolveDBName(townRoot)
+	if doltserver.DatabaseExists(townRoot, dbName) {
+		store := doltserver.NewWLCommonsWithDB(townRoot, dbName)
+		return showWanted(store, wantedID, wlShowJSON)
+	}
+
+	// Fallback: read from local filesystem clone.
 	doltPath, err := exec.LookPath("dolt")
 	if err != nil {
 		return fmt.Errorf("dolt not found in PATH — install from https://docs.dolthub.com/introduction/installation")
@@ -103,13 +111,22 @@ func resolveWLCommonsClone(townRoot, doltPath string) (cloneDir, tmpDir string, 
 	}
 
 	// No local clone — do a one-time clone-then-discard, like browse.
+	// Read upstream from config, or default to hop/wl-commons.
+	remote := "hop/wl-commons"
+	if cfg, cfgErr := wasteland.LoadConfig(townRoot); cfgErr == nil && cfg.Upstream != "" {
+		remote = cfg.Upstream
+	}
 	fmt.Fprintf(os.Stderr, "No local wl-commons clone found. Cloning temporarily.\nRun 'gt wl sync' to keep a persistent local copy.\n\n")
 	tmpDir, err = os.MkdirTemp("", "wl-show-*")
 	if err != nil {
 		return "", "", fmt.Errorf("creating temp directory: %w", err)
 	}
-	remote := "hop/wl-commons"
-	cloneDir = filepath.Join(tmpDir, "wl-commons")
+	parts := strings.SplitN(remote, "/", 2)
+	dbName := "wl-commons"
+	if len(parts) == 2 {
+		dbName = parts[1]
+	}
+	cloneDir = filepath.Join(tmpDir, dbName)
 	fmt.Printf("Cloning %s...\n", style.Bold.Render(remote))
 	cloneCmd := exec.Command(doltPath, "clone", remote, cloneDir)
 	cloneCmd.Stderr = os.Stderr

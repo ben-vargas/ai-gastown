@@ -144,19 +144,19 @@ type DoltServerManager struct {
 	onRecoveryFn func()
 
 	// Test hooks (nil = use real implementations; set only in tests)
-	healthCheckFn      func() error
-	writeProbeCheckFn  func() error
-	identityCheckFn    func() error // nil = use real VerifyServerDataDir
-	startFn            func() error
-	runningFn          func() (int, bool)
-	stopFn             func()
-	sleepFn            func(time.Duration)
-	nowFn              func() time.Time
-	escalateFn         func(int)
-	unhealthyAlertFn   func(error)
-	readOnlyAlertFn    func(error)
-	crashAlertFn       func(int)
-	listDatabasesFn    func() ([]string, error)
+	healthCheckFn     func() error
+	writeProbeCheckFn func() error
+	identityCheckFn   func() error // nil = use real VerifyServerDataDir
+	startFn           func() error
+	runningFn         func() (int, bool)
+	stopFn            func()
+	sleepFn           func(time.Duration)
+	nowFn             func() time.Time
+	escalateFn        func(int)
+	unhealthyAlertFn  func(error)
+	readOnlyAlertFn   func(error)
+	crashAlertFn      func(int)
+	listDatabasesFn   func() ([]string, error)
 }
 
 // NewDoltServerManager creates a new Dolt server manager.
@@ -220,36 +220,46 @@ func (m *DoltServerManager) isRemote() bool {
 	if m.config == nil {
 		return false
 	}
-	switch strings.ToLower(m.config.Host) {
+	host := strings.ToLower(m.config.Host)
+	switch host {
 	case "", "127.0.0.1", "localhost", "::1", "[::1]":
 		return false
+	}
+	// Resolve hostname and check if it points to loopback.
+	addrs, err := net.LookupHost(m.config.Host)
+	if err != nil {
+		return true
+	}
+	for _, addr := range addrs {
+		if ip := net.ParseIP(addr); ip != nil && ip.IsLoopback() {
+			return false
+		}
 	}
 	return true
 }
 
-// buildDoltSQLCmd constructs a dolt sql command using daemon config, mirroring
-// the doltserver.buildDoltSQLCmd pattern for local-vs-remote command construction.
+// buildDoltSQLCmd constructs a non-interactive dolt sql command that always
+// talks to the running SQL server over TCP.
+//
+// For local servers, this avoids embedded-mode auto-discovery, which can load
+// databases relative to cmd.Dir instead of querying the live shared server.
 func (m *DoltServerManager) buildDoltSQLCmd(ctx context.Context, args ...string) *exec.Cmd {
-	var fullArgs []string
-	fullArgs = append(fullArgs, "sql")
-
-	if m.isRemote() {
-		host := m.config.Host
-		if host == "" {
-			host = "127.0.0.1"
-		}
-		user := m.config.User
-		if user == "" {
-			user = "root"
-		}
-		fullArgs = append(fullArgs,
-			"--host", host,
-			"--port", strconv.Itoa(m.config.Port),
-			"--user", user,
-			"--no-tls",
-		)
+	host := m.config.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	user := m.config.User
+	if user == "" {
+		user = "root"
 	}
 
+	fullArgs := []string{
+		"--host", host,
+		"--port", strconv.Itoa(m.config.Port),
+		"--user", user,
+		"--no-tls",
+		"sql",
+	}
 	fullArgs = append(fullArgs, args...)
 	cmd := exec.CommandContext(ctx, "dolt", fullArgs...)
 	setSysProcAttr(cmd)
@@ -260,8 +270,20 @@ func (m *DoltServerManager) buildDoltSQLCmd(ctx context.Context, args ...string)
 	// .doltcfg directories detected" or "Access denied" errors.
 	cmd.Dir = m.config.DataDir
 
-	if m.isRemote() && m.config.Password != "" {
+	// Always set DOLT_CLI_PASSWORD when explicitly configured.
+	// For remote checks, preserve inherited credentials if config omits a
+	// password. For local checks, keep forcing the empty-password path so
+	// inherited shell credentials cannot make a healthy local server look broken.
+	if m.config.Password != "" {
 		cmd.Env = append(os.Environ(), "DOLT_CLI_PASSWORD="+m.config.Password)
+	} else if m.isRemote() {
+		if inherited, ok := os.LookupEnv("DOLT_CLI_PASSWORD"); ok {
+			cmd.Env = append(os.Environ(), "DOLT_CLI_PASSWORD="+inherited)
+		} else {
+			cmd.Env = append(os.Environ(), "DOLT_CLI_PASSWORD=")
+		}
+	} else {
+		cmd.Env = append(os.Environ(), "DOLT_CLI_PASSWORD=")
 	}
 
 	return cmd

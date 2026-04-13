@@ -91,6 +91,13 @@ type TownSettings struct {
 	// Convoy configures convoy behavior settings.
 	Convoy *ConvoyConfig `json:"convoy,omitempty"`
 
+	// RoleEffort maps role names to effort levels for per-role effort configuration.
+	// Keys are role names: "mayor", "deacon", "witness", "refinery", "polecat", "crew", "boot", "dog".
+	// Values are effort levels: "low", "medium", "high", "max".
+	// Allows cost/speed optimization by using lower effort for simpler roles.
+	// Managed by cost-tier presets alongside RoleAgents.
+	RoleEffort map[string]string `json:"role_effort,omitempty"`
+
 	// CostTier tracks which cost tier preset was applied (informational).
 	// Actual model assignments live in RoleAgents and Agents.
 	// Values: "standard", "economy", "budget", or empty for custom configs.
@@ -670,6 +677,12 @@ type RigSettings struct {
 	// Takes precedence over RoleAgents["crew"] but is overridden by explicit --agent flags.
 	// Example: {"denali": "codex", "glacier": "gemini"}
 	WorkerAgents map[string]string `json:"worker_agents,omitempty"`
+
+	// RoleEffort maps role names to effort levels, overriding TownSettings.RoleEffort for this rig.
+	// Keys are role names: "witness", "refinery", "polecat", "crew".
+	// Values are effort levels: "low", "medium", "high", "max".
+	// Example: {"crew": "max", "witness": "low"}
+	RoleEffort map[string]string `json:"role_effort,omitempty"`
 }
 
 // CrewConfig represents crew workspace settings for a rig.
@@ -842,19 +855,20 @@ func (rc *RuntimeConfig) BuildCommandWithPrompt(prompt string) string {
 
 	// OpenCode requires --prompt flag for initial prompt in interactive mode.
 	// Positional argument causes opencode to exit immediately.
-	if resolved.Command == "opencode" {
+	// Match both "opencode" and full paths like "/home/user/.opencode/bin/opencode".
+	if resolved.Command == "opencode" || filepath.Base(resolved.Command) == "opencode" {
 		return base + " --prompt " + quoteForShell(p)
 	}
 
-	// Copilot  requires -i flag for initial prompt in interactive mode.
-	if resolved.Command == "copilot" {
+	// Copilot requires -i flag for initial prompt in interactive mode.
+	if resolved.Command == "copilot" || filepath.Base(resolved.Command) == "copilot" {
 		return base + " -i " + quoteForShell(p)
 	}
 
 	// Gemini requires -i (--prompt-interactive) to auto-execute the prompt
 	// while staying in interactive mode. Positional args populate the input
 	// field but don't execute, and -p runs headless (exits after completion).
-	if resolved.Command == "gemini" {
+	if resolved.Command == "gemini" || filepath.Base(resolved.Command) == "gemini" {
 		return base + " -i " + quoteForShell(p)
 	}
 
@@ -1147,6 +1161,12 @@ type ThemeConfig struct {
 	// Custom overrides the palette with specific colors.
 	Custom *CustomTheme `json:"custom,omitempty"`
 
+	// CrewThemes maps crew member names to theme names.
+	// Checked before RoleThemes, so individual crew members can have distinct colors
+	// while other crew members fall back to the role-level theme.
+	// Example: {"krieger": "teal", "mallory": "ember"}
+	CrewThemes map[string]string `json:"crew_themes,omitempty"`
+
 	// RoleThemes overrides themes for specific roles in this rig.
 	// Keys: "witness", "refinery", "crew", "polecat".
 	// A value of "none" disables tmux theming for that role.
@@ -1175,6 +1195,10 @@ type TownThemeConfig struct {
 	// Custom overrides the palette with specific colors when no role-specific
 	// override exists.
 	Custom *CustomTheme `json:"custom,omitempty"`
+
+	// CrewThemes maps crew member names to theme names (town-wide defaults).
+	// Checked before RoleDefaults. Per-rig CrewThemes take precedence.
+	CrewThemes map[string]string `json:"crew_themes,omitempty"`
 
 	// RoleDefaults sets default themes for roles across all rigs.
 	// Keys: "mayor", "deacon", "witness", "refinery", "crew", "polecat".
@@ -1205,6 +1229,13 @@ type WindowTint struct {
 	// RoleTints overrides window tint themes for specific roles.
 	// Keys: "witness", "refinery", "crew", "polecat"
 	RoleTints map[string]string `json:"role_tints,omitempty"`
+
+	// TintFactor controls how much the window background is darkened when
+	// inheriting from the status bar theme (0.0–1.0). Lower = darker.
+	// Default: 0.4 (40% of status bar brightness).
+	// Only applies when window tint inherits from the status bar theme
+	// (i.e., no explicit name, custom, or role_tints match).
+	TintFactor *float64 `json:"tint_factor,omitempty"`
 }
 
 // BuiltinRoleThemes returns the default themes for each role.
@@ -1246,11 +1277,16 @@ type MergeQueueConfig struct {
 	IntegrationBranchAutoLand *bool `json:"integration_branch_auto_land,omitempty"`
 
 	// MergeStrategy controls how the refinery lands approved work: "direct" (default)
-	// merges directly to the base branch, "pr" creates a GitHub pull request.
+	// merges directly to the base branch, "pr" uses the VCS provider's merge API
+	// which respects branch protection/restriction rules.
 	MergeStrategy string `json:"merge_strategy,omitempty"`
 
+	// VCSProvider selects the VCS platform for PR operations when
+	// MergeStrategy="pr". Valid values: "github" (default), "bitbucket".
+	VCSProvider string `json:"vcs_provider,omitempty"`
+
 	// RequireReview controls whether the refinery requires at least one approving
-	// GitHub review before merging a PR. Only meaningful when merge_strategy="pr".
+	// review before merging a PR. Only meaningful when merge_strategy="pr".
 	// Nil defaults to false (no review required).
 	RequireReview *bool `json:"require_review,omitempty"`
 

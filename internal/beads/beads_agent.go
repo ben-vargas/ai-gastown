@@ -218,6 +218,15 @@ func (b *Beads) CreateAgentBead(id, title string, fields *AgentFields) (*Issue, 
 	// Don't bail out — try the bd create calls anyway (GH#1769).
 	_ = EnsureCustomTypes(targetDir)
 
+	// For routed cross-rig bead IDs, run bd from the town root so bd's own
+	// prefix router resolves the target once. Running from a rig worktree with
+	// a routed BEADS_DIR can double-stack the path for imported rigs.
+	target := b
+	townRoot := b.getTownRoot()
+	if townRoot != "" && ExtractPrefix(id) != "" {
+		target = NewWithBeadsDir(townRoot, filepath.Join(townRoot, ".beads"))
+	}
+
 	description := FormatAgentDescription(title, fields)
 
 	buildArgs := func() []string {
@@ -225,7 +234,7 @@ func (b *Beads) CreateAgentBead(id, title string, fields *AgentFields) (*Issue, 
 			"--id=" + id,
 			"--title=" + title,
 			"--description=" + description,
-			"--type=agent",
+			"--type=task",
 			"--labels=gt:agent",
 		}
 		if NeedsForceForID(id) {
@@ -233,19 +242,10 @@ func (b *Beads) CreateAgentBead(id, title string, fields *AgentFields) (*Issue, 
 		}
 		// Default actor from BD_ACTOR env var for provenance tracking
 		// Uses getActor() to respect isolated mode (tests)
-		if actor := b.getActor(); actor != "" {
+		if actor := target.getActor(); actor != "" {
 			a = append(a, "--actor="+actor)
 		}
 		return a
-	}
-
-	// Create agent bead in the target database. Use a routed Beads instance
-	// when the bead's prefix routes to a different rig than our own database.
-	// Without this, agent beads for rig polecats (e.g., be-beads-polecat-rust)
-	// would be created in the wrong database, failing type validation.
-	target := b
-	if targetDir != b.getResolvedBeadsDir() {
-		target = NewWithBeadsDir(filepath.Dir(targetDir), targetDir)
 	}
 
 	out, err := target.run(buildArgs()...)
@@ -330,8 +330,9 @@ func (b *Beads) CreateOrReopenAgentBead(id, title string, fields *AgentFields) (
 		}
 	}
 
-	// Update the bead with new fields and ensure type=agent (gt-dr02sy:
-	// old beads may have type=task, which breaks bd slot set).
+	// Update the bead with new fields and ensure gt:agent label is set.
+	// Agent beads use type=task (a valid built-in type) and are identified
+	// by the gt:agent label, not by type (see IsAgentBead).
 	description := FormatAgentDescription(title, fields)
 	updateOpts := UpdateOptions{
 		Title:       &title,
@@ -340,10 +341,6 @@ func (b *Beads) CreateOrReopenAgentBead(id, title string, fields *AgentFields) (
 	}
 	if err := target.Update(id, updateOpts); err != nil {
 		return nil, fmt.Errorf("updating agent bead: %w", err)
-	}
-	// Fix type separately — UpdateOptions doesn't support type changes
-	if _, err := target.run("update", id, "--type=agent"); err != nil {
-		return nil, fmt.Errorf("fixing agent bead type: %w", err)
 	}
 
 	// Note: role slot no longer set - role definitions are config-based

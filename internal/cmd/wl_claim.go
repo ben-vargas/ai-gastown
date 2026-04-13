@@ -47,11 +47,12 @@ func runWlClaim(cmd *cobra.Command, args []string) error {
 	}
 	rigHandle := wlCfg.RigHandle
 
+	dbName := wasteland.ResolveDBName(townRoot)
 	var item *doltserver.WantedItem
-	if !doltserver.DatabaseExists(townRoot, doltserver.WLCommonsDB) {
+	if !doltserver.DatabaseExists(townRoot, dbName) {
 		// Fallback for wl-commons clone-based workspaces (join creates .wasteland clone).
 		if wlCfg.LocalDir == "" {
-			return fmt.Errorf("database %q not found\nJoin a wasteland first with: gt wl join <org/db>", doltserver.WLCommonsDB)
+			return fmt.Errorf("database %q not found\nJoin a wasteland first with: gt wl join <org/db>", dbName)
 		}
 		if err := claimWantedInLocalClone(wlCfg.LocalDir, wantedID, rigHandle); err != nil {
 			return err

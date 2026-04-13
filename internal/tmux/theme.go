@@ -4,6 +4,8 @@ package tmux
 import (
 	"fmt"
 	"hash/fnv"
+	"strconv"
+	"strings"
 )
 
 // WindowStyle represents window background colors (tmux window-style).
@@ -94,6 +96,26 @@ func AssignThemeFromPalette(rigName string, palette []Theme) Theme {
 // Style returns the tmux status-style string for this theme.
 func (t Theme) Style() string {
 	return fmt.Sprintf("bg=%s,fg=%s", t.BG, t.FG)
+}
+
+// DarkenColor reduces a hex color's brightness by the given factor (0.0–1.0).
+// A factor of 0.4 means 40% of original brightness. Non-hex colors (e.g.,
+// "default") are returned unchanged.
+func DarkenColor(hex string, factor float64) string {
+	hex = strings.TrimPrefix(hex, "#")
+	if len(hex) != 6 {
+		return "#" + hex // Not a standard hex color, return as-is.
+	}
+	r, err1 := strconv.ParseUint(hex[0:2], 16, 8)
+	g, err2 := strconv.ParseUint(hex[2:4], 16, 8)
+	b, err3 := strconv.ParseUint(hex[4:6], 16, 8)
+	if err1 != nil || err2 != nil || err3 != nil {
+		return "#" + hex
+	}
+	dr := uint8(float64(r) * factor)
+	dg := uint8(float64(g) * factor)
+	db := uint8(float64(b) * factor)
+	return fmt.Sprintf("#%02x%02x%02x", dr, dg, db)
 }
 
 // ListThemeNames returns the names of all themes in the default palette.
