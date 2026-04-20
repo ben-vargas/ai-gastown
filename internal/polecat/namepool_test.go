@@ -1228,3 +1228,26 @@ func TestGetNames_FallbackOnDeletedThemeFile(t *testing.T) {
 		t.Errorf("expected fallback to default theme (furiosa), got %s", name)
 	}
 }
+
+func TestGetNames_UnresolvableTheme_FallsBackToDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	pool := NewNamePoolWithConfig(tmpDir, "testrig", "nonexistent-theme", nil, 10)
+	pool.SetTownRoot(tmpDir)
+
+	name, err := pool.Allocate()
+	if err != nil {
+		t.Fatalf("Allocate error: %v", err)
+	}
+	defaultNames := BuiltinThemes[DefaultTheme]
+	found := false
+	for _, dn := range defaultNames {
+		if dn == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected name from default theme, got %q", name)
+	}
+}

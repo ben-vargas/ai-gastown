@@ -335,6 +335,59 @@ func TestGetRigNameForPrefix(t *testing.T) {
 	}
 }
 
+func TestGetRigDirForName(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	routesContent := `{"prefix": "ga-", "path": "gantry"}
+{"prefix": "al-", "path": "algoanki/mayor/rig"}
+{"prefix": "hq-", "path": "."}
+`
+	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), []byte(routesContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		rigName  string
+		expected string
+	}{
+		{"gantry", filepath.Join(tmpDir, "gantry")},
+		{"algoanki", filepath.Join(tmpDir, "algoanki/mayor/rig")},
+		{"unknown", ""},        // Not in routes
+		{"", ""},               // Empty rig name
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.rigName, func(t *testing.T) {
+			result := GetRigDirForName(tmpDir, tc.rigName)
+			if result != tc.expected {
+				t.Errorf("GetRigDirForName(%q, %q) = %q, want %q", tmpDir, tc.rigName, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestGetRigDirForName_TownLevelNotReturned(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	routesContent := `{"prefix": "hq-", "path": "."}
+`
+	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), []byte(routesContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Town-level rig (path=".") should not be returned — it has no rig dir.
+	result := GetRigDirForName(tmpDir, "hq")
+	if result != "" {
+		t.Errorf("GetRigDirForName for town-level path = %q, want empty string", result)
+	}
+}
+
 func TestCheckPrefixAvailable(t *testing.T) {
 	tmpDir := t.TempDir()
 	beadsDir := filepath.Join(tmpDir, ".beads")

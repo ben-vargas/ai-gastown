@@ -298,7 +298,7 @@ type CreateOptions struct {
 	Parent      string
 	Actor       string // Who is creating this issue (populates created_by)
 	Ephemeral   bool   // Create as ephemeral (wisp) - not synced to git
-	Rig         string // Target rig database (e.g., "gastown"). When set, passes --rig to bd create.
+	Rig         string // Target rig database (e.g., "gantry"). When set, routes bd create to the rig's directory via --repo.
 }
 
 // UpdateOptions specifies options for updating an issue.
@@ -1227,7 +1227,11 @@ func (b *Beads) Create(opts CreateOptions) (*Issue, error) {
 		args = append(args, "--ephemeral")
 	}
 	if opts.Rig != "" {
-		args = append(args, "--rig="+opts.Rig)
+		if townRoot := b.getTownRoot(); townRoot != "" {
+			if rigDir := GetRigDirForName(townRoot, opts.Rig); rigDir != "" {
+				args = append(args, "--repo="+rigDir)
+			}
+		}
 	}
 	// Default Actor from BD_ACTOR env var if not specified
 	// Uses getActor() to respect isolated mode (tests)

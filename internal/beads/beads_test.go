@@ -79,7 +79,7 @@ func TestCreateOptionsRig(t *testing.T) {
 		t.Errorf("Rig = %q, want %q", opts.Rig, "gastown")
 	}
 
-	// Zero value: Rig is empty string (no --rig flag passed).
+	// Zero value: Rig is empty string (no --repo flag passed).
 	var empty CreateOptions
 	if empty.Rig != "" {
 		t.Errorf("zero-value Rig = %q, want empty string", empty.Rig)
