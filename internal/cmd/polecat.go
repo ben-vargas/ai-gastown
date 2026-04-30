@@ -1036,20 +1036,16 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 	// verify the work was actually submitted to the merge queue.
 	// Without this check, polecats that crashed between push and MQ submission
 	// would be nuked with orphaned branches on the remote. See #1035.
+	//
+	// Exception: if the polecat's assigned bead is already CLOSED/TOMBSTONE,
+	// the work is terminal and MQ submission is moot. Reporting NEEDS_MQ_SUBMIT
+	// on a closed bead triggered a zombie-restart loop (see aa-55d8): witness
+	// patrols kept auto-restarting the polecat to "finish" work that was already
+	// done, which just ran `gt done` again and died, over and over.
 	if status.Verdict == "SAFE_TO_NUKE" && status.Branch != "" {
 		mqBd := beads.New(r.Path)
-		mr, mrErr := mqBd.FindMRForBranchAny(status.Branch)
-		if mrErr != nil {
-			// Can't verify MQ — be conservative
-			status.MQStatus = "unknown"
-		} else if mr != nil {
-			status.MQStatus = "submitted"
-		} else {
-			// Work was pushed but never entered the merge queue
-			status.MQStatus = "not_submitted"
-			status.NeedsRecovery = true
-			status.Verdict = "NEEDS_MQ_SUBMIT"
-		}
+		beadTerminal := isAssignedBeadTerminal(mqBd, status.Issue)
+		applyMQCheck(&status, mqBd, beadTerminal)
 	}
 
 	// JSON output
@@ -1092,6 +1088,56 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// mrFinder is the subset of *beads.Beads that applyMQCheck needs. It lets us
+// unit-test the verdict logic without a real bd binary.
+type mrFinder interface {
+	FindMRForBranchAny(branch string) (*beads.Issue, error)
+}
+
+// isAssignedBeadTerminal reports whether the polecat's assigned bead (if any)
+// is in a terminal status (closed/tombstone). Returns false on any lookup
+// failure — callers must only use this to *skip* further escalation, never to
+// escalate, so a false negative is safe.
+func isAssignedBeadTerminal(bd *beads.Beads, issueID string) bool {
+	if issueID == "" || bd == nil {
+		return false
+	}
+	issue, err := bd.Show(issueID)
+	if err != nil || issue == nil {
+		return false
+	}
+	return beads.IssueStatus(issue.Status).IsTerminal()
+}
+
+// applyMQCheck mutates status based on merge-queue state for the polecat's
+// branch. If beadTerminal is true, the assigned bead is already closed, so
+// there is nothing to submit and we leave the verdict as SAFE_TO_NUKE.
+//
+// This guard fixes the zombie-restart loop documented in bead aa-55d8:
+// a closed "no-op audit" bead (e.g. aa-xtee) used to report NEEDS_MQ_SUBMIT
+// forever, causing witness patrols to restart the polecat on every cycle.
+func applyMQCheck(status *RecoveryStatus, bd mrFinder, beadTerminal bool) {
+	if beadTerminal {
+		// Nothing to submit — the bead is already terminal.
+		status.MQStatus = "submitted"
+		return
+	}
+	mr, mrErr := bd.FindMRForBranchAny(status.Branch)
+	if mrErr != nil {
+		// Can't verify MQ — be conservative
+		status.MQStatus = "unknown"
+		return
+	}
+	if mr != nil {
+		status.MQStatus = "submitted"
+		return
+	}
+	// Work was pushed but never entered the merge queue
+	status.MQStatus = "not_submitted"
+	status.NeedsRecovery = true
+	status.Verdict = "NEEDS_MQ_SUBMIT"
 }
 
 func runPolecatGC(cmd *cobra.Command, args []string) error {
