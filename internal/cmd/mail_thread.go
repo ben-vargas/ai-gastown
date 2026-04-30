@@ -146,6 +146,9 @@ func runMailReply(cmd *cobra.Command, args []string) error {
 	if err := router.Send(reply); err != nil {
 		return fmt.Errorf("sending reply: %w", err)
 	}
+	if err := router.ClearReplyReminders(from, reply.ThreadID); err != nil {
+		style.PrintWarning("could not clear satisfied reply reminders: %v", err)
+	}
 
 	fmt.Printf("%s Reply sent to %s\n", style.Bold.Render("✓"), original.From)
 	fmt.Printf("  Subject: %s\n", subject)

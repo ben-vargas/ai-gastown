@@ -313,6 +313,58 @@ func QueueLen(townRoot, session string) int {
 	return n
 }
 
+// RemoveKindByThread deletes queued nudges for a session that match both the
+// provided kind and thread ID. It only removes queued .json files, leaving any
+// in-flight claimed files alone so concurrent drainers can finish safely.
+func RemoveKindByThread(townRoot, session, kind, threadID string) (int, error) {
+	if kind == "" || threadID == "" {
+		return 0, nil
+	}
+
+	dir := queueDir(townRoot, session)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("reading nudge queue: %w", err)
+	}
+
+	removed := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+
+		path := filepath.Join(dir, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return removed, fmt.Errorf("reading queued nudge %s: %w", entry.Name(), err)
+		}
+
+		var n QueuedNudge
+		if err := json.Unmarshal(data, &n); err != nil {
+			continue
+		}
+		if n.Kind != kind || n.ThreadID != threadID {
+			continue
+		}
+
+		if err := os.Remove(path); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return removed, fmt.Errorf("removing queued nudge %s: %w", entry.Name(), err)
+		}
+		removed++
+	}
+
+	return removed, nil
+}
+
 // FormatForInjection formats queued nudges as a system-reminder block
 // suitable for Claude Code hook output.
 func FormatForInjection(nudges []QueuedNudge) string {

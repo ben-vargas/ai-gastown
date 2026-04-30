@@ -208,6 +208,11 @@ func runMailSend(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "⚠ Some deliveries failed: %s\n", strings.Join(sendErrs, "; "))
 	}
+	if mailReplyTo != "" {
+		if err := router.ClearReplyReminders(from, msg.ThreadID); err != nil {
+			style.PrintWarning("could not clear satisfied reply reminders: %v", err)
+		}
+	}
 
 	// Log mail event to activity feed
 	_ = events.LogFeed(events.TypeMail, from, events.MailPayload(to, mailSubject))

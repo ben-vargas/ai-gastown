@@ -613,6 +613,45 @@ func TestDrainMixedDeferredAndReady(t *testing.T) {
 	}
 }
 
+func TestRemoveKindByThread(t *testing.T) {
+	townRoot := t.TempDir()
+	session := "gt-test-remove"
+
+	keep := QueuedNudge{Sender: "system", Message: "keep", Kind: "mail", ThreadID: "thread-1"}
+	removeA := QueuedNudge{Sender: "system", Message: "remove-a", Kind: "reply-reminder", ThreadID: "thread-1"}
+	removeB := QueuedNudge{Sender: "system", Message: "remove-b", Kind: "reply-reminder", ThreadID: "thread-1"}
+	otherThread := QueuedNudge{Sender: "system", Message: "other-thread", Kind: "reply-reminder", ThreadID: "thread-2"}
+
+	for _, n := range []QueuedNudge{keep, removeA, removeB, otherThread} {
+		if err := Enqueue(townRoot, session, n); err != nil {
+			t.Fatalf("Enqueue(%q): %v", n.Message, err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	removed, err := RemoveKindByThread(townRoot, session, "reply-reminder", "thread-1")
+	if err != nil {
+		t.Fatalf("RemoveKindByThread: %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("removed = %d, want 2", removed)
+	}
+
+	nudges, err := Drain(townRoot, session)
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(nudges) != 2 {
+		t.Fatalf("Drain returned %d nudges, want 2", len(nudges))
+	}
+	if nudges[0].Message != "keep" {
+		t.Fatalf("nudges[0].Message = %q, want %q", nudges[0].Message, "keep")
+	}
+	if nudges[1].Message != "other-thread" {
+		t.Fatalf("nudges[1].Message = %q, want %q", nudges[1].Message, "other-thread")
+	}
+}
+
 // TestDeferredNudgeDeliveredAfterDelay uses a very short DeliverAfter to confirm
 // that the same nudge is skipped on first Drain and delivered on a second Drain
 // after the deadline elapses.

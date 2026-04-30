@@ -1748,11 +1748,30 @@ func (r *Router) enqueueReplyReminder(msg *Message, sessionID string) {
 		Sender:       "system",
 		Message:      fmt.Sprintf("Remember to reply to %s (subject: %q) via `gt mail send %s` — not in chat.", msg.From, msg.Subject, msg.From),
 		Priority:     nudge.PriorityNormal,
+		Kind:         "reply-reminder",
+		ThreadID:     msg.ThreadID,
 		DeliverAfter: time.Now().Add(delay),
 	}
 	if err := nudge.Enqueue(r.townRoot, sessionID, reminder); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to enqueue reply reminder for %s: %v\n", sessionID, err)
 	}
+}
+
+// ClearReplyReminders removes any queued reply-reminder nudges for the given
+// recipient identity and thread. This is best-effort cleanup after a successful
+// reply send so satisfied threads do not keep re-nudging.
+func (r *Router) ClearReplyReminders(address, threadID string) error {
+	if r.townRoot == "" || threadID == "" {
+		return nil
+	}
+
+	var firstErr error
+	for _, sessionID := range AddressToSessionIDs(address) {
+		if _, err := nudge.RemoveKindByThread(r.townRoot, sessionID, "reply-reminder", threadID); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // IsRecipientMuted checks if a mail recipient has DND/muted notifications enabled.
