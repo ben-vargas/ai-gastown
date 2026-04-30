@@ -73,6 +73,35 @@ func verifyFormulaExists(formulaName string) error {
 	return fmt.Errorf("formula '%s' not found (check 'bd formula list')", formulaName)
 }
 
+// findHookedFormulaSingleton returns the existing hooked bead for an assignee
+// when that bead already carries the same attached_formula metadata.
+func findHookedFormulaSingleton(workDir, targetAgent, formulaName string) (*beads.Issue, error) {
+	if workDir == "" || targetAgent == "" || formulaName == "" {
+		return nil, nil
+	}
+
+	b := beads.New(workDir)
+	hookedBeads, err := b.List(beads.ListOptions{
+		Status:   beads.StatusHooked,
+		Assignee: targetAgent,
+		Priority: -1,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	for _, bead := range hookedBeads {
+		fields := beads.ParseAttachmentFields(bead)
+		if fields != nil && fields.AttachedFormula == formulaName {
+			return bead, nil
+		}
+	}
+
+	return nil, nil
+}
+
+var findHookedFormulaSingletonFn = findHookedFormulaSingleton
+
 // runSlingFormula handles standalone formula slinging.
 // Flow: cook → wisp → attach to hook → nudge
 func runSlingFormula(ctx context.Context, args []string) error {
@@ -119,7 +148,22 @@ func runSlingFormula(ctx context.Context, args []string) error {
 		rollbackSlingArtifactsFn(resolved.NewPolecatInfo, beadID, formulaWorkDir, "")
 	}
 
+	// Resolve working directory for bd commands (routes to correct rig beads)
+	// Fall back to townRoot (HQ beads) if no specific rig directory was determined
+	if formulaWorkDir == "" {
+		formulaWorkDir = townRoot
+	}
+
 	if slingDryRun {
+		existing, err := findHookedFormulaSingletonFn(formulaWorkDir, targetAgent, formulaName)
+		if err != nil {
+			return fmt.Errorf("checking existing hooked formulas for %s: %w", targetAgent, err)
+		}
+		if existing != nil && !slingForce {
+			fmt.Printf("Would reuse existing formula %s on %s via %s\n", formulaName, targetAgent, existing.ID)
+			return nil
+		}
+
 		fmt.Printf("Would cook formula: %s\n", formulaName)
 		fmt.Printf("Would create wisp and pin to: %s\n", targetAgent)
 		for _, v := range slingVars {
@@ -129,10 +173,22 @@ func runSlingFormula(ctx context.Context, args []string) error {
 		return nil
 	}
 
-	// Resolve working directory for bd commands (routes to correct rig beads)
-	// Fall back to townRoot (HQ beads) if no specific rig directory was determined
-	if formulaWorkDir == "" {
-		formulaWorkDir = townRoot
+	// Serialize standalone formula slings per assignee so same-formula retries
+	// and handoffs cannot create duplicate hooked wisps for one target.
+	assigneeUnlock, assigneeLockErr := tryAcquireSlingAssigneeLock(townRoot, targetAgent)
+	if assigneeLockErr != nil {
+		return fmt.Errorf("serializing formula sling for %s: %w", targetAgent, assigneeLockErr)
+	}
+	defer assigneeUnlock()
+
+	existing, err := findHookedFormulaSingletonFn(formulaWorkDir, targetAgent, formulaName)
+	if err != nil {
+		return fmt.Errorf("checking existing hooked formulas for %s: %w", targetAgent, err)
+	}
+	if existing != nil && !slingForce {
+		fmt.Printf("%s Formula %s already hooked to %s via %s, no-op\n",
+			style.Dim.Render("○"), formulaName, targetAgent, existing.ID)
+		return nil
 	}
 
 	// Step 1: Cook the formula (ensures proto exists)
@@ -177,13 +233,7 @@ func runSlingFormula(ctx context.Context, args []string) error {
 	fmt.Printf("%s Wisp created: %s\n", style.Bold.Render("✓"), wispRootID)
 
 	// Step 3: Hook the wisp bead with retry and verification.
-	// See: https://github.com/steveyegge/gastown/issues/148
-	// Acquire per-assignee lock to serialize concurrent hook writes (issue #3114).
-	assigneeUnlock, assigneeLockErr := tryAcquireSlingAssigneeLock(townRoot, targetAgent)
-	if assigneeLockErr != nil {
-		return fmt.Errorf("serializing hook write for %s: %w", targetAgent, assigneeLockErr)
-	}
-	defer assigneeUnlock()
+	// See: https://github.com/steveyegge/gastown/issues/148.
 	hookDir := beads.ResolveHookDir(townRoot, wispRootID, "")
 	if err := hookBeadWithRetry(wispRootID, targetAgent, hookDir); err != nil {
 		return err
