@@ -709,22 +709,30 @@ func TestDefaultRefineryHandler_HandleMergeReady(t *testing.T) {
 
 func TestDefaultRefineryHandler_NotifyMergeOutcome_Success(t *testing.T) {
 	tmpDir := t.TempDir()
+	// Prevent detectTownRoot from finding the real town via GT_TOWN_ROOT/GT_ROOT.
+	// Without this, NewRouter falls back to the production beads and delivers
+	// synthetic "MERGED nux" messages to the live mail system during test runs.
+	t.Setenv("GT_TOWN_ROOT", tmpDir)
+	t.Setenv("GT_ROOT", tmpDir)
 	handler := NewRefineryHandler("gastown", tmpDir)
+	handler.Router = mail.NewRouterWithTownRoot(tmpDir, "")
 
 	outcome := MergeOutcome{
 		Success:     true,
 		MergeCommit: "abc123",
 	}
 
-	// SendMerged will fail (no mail setup) but we're testing the routing logic
+	// Testing routing logic only — delivery will fail (no .beads in tmpDir)
 	err := handler.NotifyMergeOutcome("nux", "polecat/nux/gt-abc", "gt-abc", "main", outcome)
-	// Error is expected because mail router has no valid config in tmpdir
 	_ = err
 }
 
 func TestDefaultRefineryHandler_NotifyMergeOutcome_Conflict(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("GT_TOWN_ROOT", tmpDir)
+	t.Setenv("GT_ROOT", tmpDir)
 	handler := NewRefineryHandler("gastown", tmpDir)
+	handler.Router = mail.NewRouterWithTownRoot(tmpDir, "")
 
 	outcome := MergeOutcome{
 		Success:       false,
@@ -738,7 +746,10 @@ func TestDefaultRefineryHandler_NotifyMergeOutcome_Conflict(t *testing.T) {
 
 func TestDefaultRefineryHandler_NotifyMergeOutcome_Failure(t *testing.T) {
 	tmpDir := t.TempDir()
+	t.Setenv("GT_TOWN_ROOT", tmpDir)
+	t.Setenv("GT_ROOT", tmpDir)
 	handler := NewRefineryHandler("gastown", tmpDir)
+	handler.Router = mail.NewRouterWithTownRoot(tmpDir, "")
 
 	outcome := MergeOutcome{
 		Success:     false,
