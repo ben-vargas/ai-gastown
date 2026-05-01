@@ -1192,19 +1192,19 @@ func TestLooksLikeBeadID(t *testing.T) {
 		{"aaaaaa-b", false},     // prefix too long (6 chars)
 
 		// Injection / invalid suffix characters - should return false
-		{"gt-abc;rm -rf /", false},       // shell injection in suffix
-		{"gt-abc$(cmd)", false},          // command substitution in suffix
-		{"gt-abc&bg", false},            // ampersand in suffix
-		{"gt-abc|pipe", false},          // pipe in suffix
-		{"gt-abc`tick`", false},         // backtick in suffix
-		{"gt-abc>redir", false},         // redirect in suffix
-		{"gt-abc<redir", false},         // redirect in suffix
-		{"gt-abc'quote", false},         // single quote in suffix
-		{"gt-abc\"dquote", false},       // double quote in suffix
-		{"gt-abc\\slash", false},        // backslash in suffix
-		{"gt-abc xyz", false},           // space in suffix
-		{"gt-ABC", false},              // uppercase in suffix
-		{"gt-abc/path", false},          // slash in suffix
+		{"gt-abc;rm -rf /", false}, // shell injection in suffix
+		{"gt-abc$(cmd)", false},    // command substitution in suffix
+		{"gt-abc&bg", false},       // ampersand in suffix
+		{"gt-abc|pipe", false},     // pipe in suffix
+		{"gt-abc`tick`", false},    // backtick in suffix
+		{"gt-abc>redir", false},    // redirect in suffix
+		{"gt-abc<redir", false},    // redirect in suffix
+		{"gt-abc'quote", false},    // single quote in suffix
+		{"gt-abc\"dquote", false},  // double quote in suffix
+		{"gt-abc\\slash", false},   // backslash in suffix
+		{"gt-abc xyz", false},      // space in suffix
+		{"gt-ABC", false},          // uppercase in suffix
+		{"gt-abc/path", false},     // slash in suffix
 	}
 
 	for _, tt := range tests {
@@ -1742,6 +1742,60 @@ exit /b 0
 		if !strings.Contains(line, "ENV:BD_DOLT_AUTO_COMMIT=off|") {
 			t.Errorf("bd command missing BD_DOLT_AUTO_COMMIT=off: %s", line)
 		}
+	}
+}
+
+func TestBuildSlingFieldUpdatesIncludesConvoyFields(t *testing.T) {
+	got := buildSlingFieldUpdates(
+		"mayor",
+		"review this",
+		[]string{"feature=test"},
+		"gt-wisp-test",
+		"mol-polecat-work",
+		false,
+		false,
+		"feature=test",
+		"hq-cv-test1",
+		"local",
+		true,
+	)
+
+	if got.ConvoyID != "hq-cv-test1" {
+		t.Fatalf("ConvoyID = %q, want %q", got.ConvoyID, "hq-cv-test1")
+	}
+	if got.MergeStrategy != "local" {
+		t.Fatalf("MergeStrategy = %q, want %q", got.MergeStrategy, "local")
+	}
+	if !got.ConvoyOwned {
+		t.Fatal("ConvoyOwned = false, want true")
+	}
+}
+
+func TestStoreFieldsInBeadConvoyFields(t *testing.T) {
+	t.Setenv("GT_TEST_ATTACHED_MOLECULE_LOG", filepath.Join(t.TempDir(), "mol.log"))
+	logPath := os.Getenv("GT_TEST_ATTACHED_MOLECULE_LOG")
+
+	if err := storeFieldsInBead("gt-test123", beadFieldUpdates{
+		ConvoyID:      "hq-cv-test1",
+		MergeStrategy: "local",
+		ConvoyOwned:   true,
+	}); err != nil {
+		t.Fatalf("storeFieldsInBead: %v", err)
+	}
+
+	body, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	text := string(body)
+	if !strings.Contains(text, "convoy_id: hq-cv-test1") {
+		t.Fatalf("missing convoy_id in description:\n%s", text)
+	}
+	if !strings.Contains(text, "merge_strategy: local") {
+		t.Fatalf("missing merge_strategy in description:\n%s", text)
+	}
+	if !strings.Contains(text, "convoy_owned: true") {
+		t.Fatalf("missing convoy_owned in description:\n%s", text)
 	}
 }
 
