@@ -1491,6 +1491,12 @@ func bdDepList(beadID string) ([]bdDepResult, error) {
 // bd list is CWD-sensitive — it only searches the beads database in the current
 // directory. We resolve the correct .beads directory from the bead's prefix via
 // routes.jsonl so this works regardless of the caller's working directory.
+//
+// When the `--parent` index returns no rows, we fall back to a direct query
+// against the dependencies table (parent-child links) and resolve each child
+// via bdShow. This handles the case (GH #3700) where the index used by
+// `bd list --parent` doesn't see children that were added via `bd dep add ...
+// --type=parent-child`. The deps table is authoritative.
 func bdListChildren(parentID string) ([]bdShowResult, error) {
 	cmd := exec.Command("bd", "list", "--parent="+parentID, "--json")
 	// Route to the correct rig database via prefix resolution.
@@ -1507,10 +1513,10 @@ func bdListChildren(parentID string) ([]bdShowResult, error) {
 		return nil, fmt.Errorf("bd list --parent=%s: %w", parentID, err)
 	}
 
-	// Handle empty output (no children).
+	// Handle empty output (no children) — try the deps-table fallback first.
 	trimmed := strings.TrimSpace(string(out))
 	if trimmed == "" || trimmed == "[]" {
-		return nil, nil
+		return bdListChildrenViaDeps(parentID)
 	}
 
 	var results []bdShowResult
@@ -1518,6 +1524,41 @@ func bdListChildren(parentID string) ([]bdShowResult, error) {
 		return nil, fmt.Errorf("bd list --parent=%s: parse JSON: %w (raw: %s)", parentID, err, out)
 	}
 
+	return results, nil
+}
+
+// bdListChildrenViaDeps resolves children by querying the dependencies table
+// directly for parent-child links, then loading each child via bdShow.
+//
+// Used as a fallback when `bd list --parent=<id>` returns empty even though
+// children exist (GH #3700). Returns nil (not an error) when the prefix can't
+// be resolved or no parent-child deps exist.
+func bdListChildrenViaDeps(parentID string) ([]bdShowResult, error) {
+	beadsDir := beadsDirForID(parentID)
+	if beadsDir == "" {
+		// Can't resolve the rig; nothing more we can do.
+		return nil, nil
+	}
+
+	// Production data stores parent-child as (issue_id=parent, depends_on_id=child).
+	// "down" returns depends_on_id rows where issue_id = parentID — i.e., the
+	// epic's children. See `bd dep list <epic>` in the bug report.
+	childIDs, err := bdDepListRawIDs(beadsDir, parentID, "down", "parent-child")
+	if err != nil {
+		return nil, nil // best-effort — caller still gets the empty primary result
+	}
+	if len(childIDs) == 0 {
+		return nil, nil
+	}
+
+	results := make([]bdShowResult, 0, len(childIDs))
+	for _, id := range childIDs {
+		child, err := bdShow(id)
+		if err != nil || child == nil {
+			continue
+		}
+		results = append(results, *child)
+	}
 	return results, nil
 }
 
