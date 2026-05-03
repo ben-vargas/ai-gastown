@@ -8,8 +8,59 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
+
+func TestGitChildEnv_ForwardsExisting(t *testing.T) {
+	t.Setenv("HOME", "/tmp/fake-home")
+	t.Setenv("USER", "fakeuser")
+	t.Setenv("LOGNAME", "fakeuser")
+	t.Setenv("SSH_AUTH_SOCK", "/tmp/fake-agent.sock")
+
+	got := envMap(gitChildEnv())
+	if got["HOME"] != "/tmp/fake-home" {
+		t.Errorf("HOME: got %q, want /tmp/fake-home", got["HOME"])
+	}
+	if got["USER"] != "fakeuser" {
+		t.Errorf("USER: got %q, want fakeuser", got["USER"])
+	}
+	if got["LOGNAME"] != "fakeuser" {
+		t.Errorf("LOGNAME: got %q, want fakeuser", got["LOGNAME"])
+	}
+	if got["SSH_AUTH_SOCK"] != "/tmp/fake-agent.sock" {
+		t.Errorf("SSH_AUTH_SOCK: got %q, want /tmp/fake-agent.sock", got["SSH_AUTH_SOCK"])
+	}
+}
+
+func TestGitChildEnv_RecoversMissingIdentity(t *testing.T) {
+	// Simulate a daemon child that lost USER/LOGNAME (the gh#zt1w failure mode).
+	// HOME stays set so user.Current() succeeds without needing getpwuid.
+	t.Setenv("HOME", "/tmp/fake-home")
+	os.Unsetenv("USER")
+	os.Unsetenv("LOGNAME")
+
+	got := envMap(gitChildEnv())
+	if got["USER"] == "" {
+		t.Error("USER should have been recovered, got empty")
+	}
+	if got["LOGNAME"] == "" {
+		t.Error("LOGNAME should have been recovered, got empty")
+	}
+	if got["USER"] != got["LOGNAME"] {
+		t.Errorf("USER (%q) should match LOGNAME (%q)", got["USER"], got["LOGNAME"])
+	}
+}
+
+func envMap(env []string) map[string]string {
+	m := make(map[string]string, len(env))
+	for _, kv := range env {
+		if eq := strings.IndexByte(kv, '='); eq > 0 {
+			m[kv[:eq]] = kv[eq+1:]
+		}
+	}
+	return m
+}
 
 func TestIsTestPollution(t *testing.T) {
 	tests := []struct {

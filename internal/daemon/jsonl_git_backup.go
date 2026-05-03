@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -32,15 +33,15 @@ const (
 // testPollutionPatterns matches issue IDs or titles that indicate test data leaked
 // into production exports. These records are filtered out before writing JSONL.
 var testPollutionPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)^Test Issue`),                              // title: "Test Issue ..."
-	regexp.MustCompile(`(?i)^test[_\s]`),                               // title: "test_something" or "test something"
-	regexp.MustCompile(`^bd-[0-9]{1,2}$`),                              // id: bd-1, bd-99 (suspiciously short IDs)
-	regexp.MustCompile(`^bd-[a-z]{3,5}[0-9]{1,2}$`),                   // id: bd-abc12 (test-style IDs)
-	regexp.MustCompile(`^(testdb_|beads_t|beads_pt|doctest_)`),         // id prefixes from test databases
-	regexp.MustCompile(`(?i)^--help`),                                  // title: "--help" CLI artifacts
-	regexp.MustCompile(`(?i)^Usage:\s`),                                // title: "Usage: ..." CLI help output
-	regexp.MustCompile(`^offlinebrew-`),                                // id: offlinebrew-* test prefixes
-	regexp.MustCompile(`-wisp-`),                                       // id: wisp-pattern IDs leaked into issues table
+	regexp.MustCompile(`(?i)^Test Issue`),                      // title: "Test Issue ..."
+	regexp.MustCompile(`(?i)^test[_\s]`),                       // title: "test_something" or "test something"
+	regexp.MustCompile(`^bd-[0-9]{1,2}$`),                      // id: bd-1, bd-99 (suspiciously short IDs)
+	regexp.MustCompile(`^bd-[a-z]{3,5}[0-9]{1,2}$`),            // id: bd-abc12 (test-style IDs)
+	regexp.MustCompile(`^(testdb_|beads_t|beads_pt|doctest_)`), // id prefixes from test databases
+	regexp.MustCompile(`(?i)^--help`),                          // title: "--help" CLI artifacts
+	regexp.MustCompile(`(?i)^Usage:\s`),                        // title: "Usage: ..." CLI help output
+	regexp.MustCompile(`^offlinebrew-`),                        // id: offlinebrew-* test prefixes
+	regexp.MustCompile(`-wisp-`),                               // id: wisp-pattern IDs leaked into issues table
 }
 
 // validDBName matches safe database names (alphanumeric, underscore, hyphen).
@@ -411,12 +412,51 @@ func (d *Daemon) commitAndPushJsonlBackup(gitRepo string, databases []string, co
 	return nil
 }
 
+// gitChildEnv returns os.Environ() augmented with HOME/USER/LOGNAME/SSH_AUTH_SOCK
+// when missing. Daemon-launched git falls back to getpwuid(uid) for committer/author
+// identity if $USER and $LOGNAME are absent; on macOS that lookup can fail with
+// "No user exists for uid N" once the long-lived daemon's connection to
+// opendirectoryd is no longer reachable. Forwarding these vars lets git use them
+// directly and skip the system passwd lookup. See gh#zt1w.
+func gitChildEnv() []string {
+	env := os.Environ()
+	have := make(map[string]bool, len(env))
+	for _, kv := range env {
+		if eq := strings.IndexByte(kv, '='); eq > 0 {
+			have[kv[:eq]] = true
+		}
+	}
+
+	if have["HOME"] && have["USER"] && have["LOGNAME"] {
+		return env
+	}
+
+	// Recover identity vars from os/user. user.Current() consults $USER/$HOME
+	// before falling back to getpwuid; if all three are missing it may itself
+	// fail, in which case we return env unchanged and let git error normally.
+	u, err := user.Current()
+	if err != nil {
+		return env
+	}
+	if !have["HOME"] && u.HomeDir != "" {
+		env = append(env, "HOME="+u.HomeDir)
+	}
+	if !have["USER"] && u.Username != "" {
+		env = append(env, "USER="+u.Username)
+	}
+	if !have["LOGNAME"] && u.Username != "" {
+		env = append(env, "LOGNAME="+u.Username)
+	}
+	return env
+}
+
 // hasGitRemote checks if the named remote exists in the git repo.
 func (d *Daemon) hasGitRemote(gitRepo, name string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), gitCmdTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "git", "-C", gitRepo, "remote", "get-url", name)
+	cmd.Env = gitChildEnv()
 	util.SetDetachedProcessGroup(cmd)
 	return cmd.Run() == nil
 }
@@ -427,6 +467,7 @@ func (d *Daemon) currentGitBranch(gitRepo string) string {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "git", "-C", gitRepo, "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Env = gitChildEnv()
 	util.SetDetachedProcessGroup(cmd)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
@@ -442,6 +483,7 @@ func (d *Daemon) runGitCmd(dir string, timeout time.Duration, args ...string) er
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = gitChildEnv()
 	util.SetDetachedProcessGroup(cmd)
 
 	var stderr bytes.Buffer
@@ -542,6 +584,7 @@ func previousCommitLineCount(gitRepo, relPath string) (int, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "git", "-C", gitRepo, "show", "HEAD:"+filepath.ToSlash(relPath))
+	cmd.Env = gitChildEnv()
 	util.SetDetachedProcessGroup(cmd)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
